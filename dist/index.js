@@ -41,96 +41,38 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(186));
 const exec = __importStar(__nccwpck_require__(514));
-const utils_1 = __nccwpck_require__(918);
 const run = () => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
     try {
-        core.info('Setting input and environment variables');
-        const isCommit = core.getInput('commit');
-        const path = core.getInput('path', { required: true });
-        const key = core.getInput('key', { required: true });
-        const value = core.getInput('value', { required: true });
-        yield (0, utils_1.modifyPackageJson)(path, [{ key, value }]);
-        if (isCommit) {
-            core.info('Committing file changes');
-            yield exec.exec('git', [
-                'config',
-                '--global',
-                'user.name',
-                (_a = process.env.GITHUB_ACTOR) !== null && _a !== void 0 ? _a : ''
-            ]);
-            yield exec.exec('git', [
-                'config',
-                '--global',
-                'user.email',
-                `${process.env.GITHUB_ACTOR}@users.noreply.github.com`
-            ]);
-            yield exec.exec('git', [
-                'commit',
-                '-am',
-                `fix: update ${path} with ${key}=${value}`,
-                '--no-verify'
-            ]);
-            yield exec.exec('git', [
-                'push',
-                '-f',
-                '-u',
-                'origin',
-                `HEAD:${process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF}`
-            ]);
-            core.info('File has been successfully committed and pushed');
-        }
-        else {
-            core.info('Skipping commit files');
-        }
+        const commitName = core.getInput('commit_name', { required: true });
+        core.info(`Committing file for this commit : ${commitName}`);
+        yield exec.exec('git', [
+            'config',
+            '--global',
+            'user.name',
+            (_a = process.env.GITHUB_ACTOR) !== null && _a !== void 0 ? _a : ''
+        ]);
+        yield exec.exec('git', [
+            'config',
+            '--global',
+            'user.email',
+            `${process.env.GITHUB_ACTOR}@users.noreply.github.com`
+        ]);
+        yield exec.exec('git', ['commit', '-am', commitName, '--no-verify']);
+        yield exec.exec('git', [
+            'push',
+            '-f',
+            '-u',
+            'origin',
+            `HEAD:${process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF}`
+        ]);
+        core.info('File has been successfully committed and pushed');
     }
     catch (e) {
         core.setFailed(e.message);
     }
 });
 run();
-
-
-/***/ }),
-
-/***/ 918:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.modifyPackageJson = void 0;
-const fs_1 = __importDefault(__nccwpck_require__(147));
-const path_1 = __importDefault(__nccwpck_require__(17));
-function modifyPackageJson(fileName, properties) {
-    return __awaiter(this, void 0, void 0, function* () {
-        const filePath = path_1.default.resolve(process.cwd(), fileName);
-        const file = fs_1.default.readFileSync(filePath, 'utf8');
-        const newFile = JSON.parse(file);
-        for (const prop of properties) {
-            newFile[prop.key] = prop.value;
-        }
-        fs_1.default.writeFile(filePath, JSON.stringify(newFile, null, 2), err => {
-            if (err) {
-                throw new Error(err.message);
-            }
-            console.log(`Writing to ${fileName}`);
-        });
-    });
-}
-exports.modifyPackageJson = modifyPackageJson;
 
 
 /***/ }),
