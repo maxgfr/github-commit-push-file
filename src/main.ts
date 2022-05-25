@@ -19,6 +19,7 @@ const run = async (): Promise<void> => {
       'user.email',
       `${process.env.GITHUB_ACTOR}@users.noreply.github.com`
     ])
+    await exec.exec('git', ['add', '-A'])
     await exec.exec('git', ['commit', '-am', commitName, '--no-verify'])
     await exec.exec('git', [
       'push',

@@ -58,6 +58,7 @@ const run = () => __awaiter(void 0, void 0, void 0, function* () {
             'user.email',
             `${process.env.GITHUB_ACTOR}@users.noreply.github.com`
         ]);
+        yield exec.exec('git', ['add', '-A']);
         yield exec.exec('git', ['commit', '-am', commitName, '--no-verify']);
         yield exec.exec('git', [
             'push',
