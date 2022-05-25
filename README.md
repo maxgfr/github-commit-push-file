@@ -1,4 +1,4 @@
-# github-commit-push-file [![View Action](https://img.shields.io/badge/view-github%20action-yellow.svg)](https://github.com/marketplace/actions/github-commit-push-file) [![pipeline](https://img.shields.io/github/workflow/status/maxgfr/github-commit-push-file/build-test)](https://github.com/maxgfr/github-commit-push-file/actions/workflows/build.yaml)
+# github-commit-push-file [![View Action](https://img.shields.io/badge/view-github%20action-yellow.svg)](https://github.com/marketplace/actions/github-commit-push-file) [![pipeline](https://img.shields.io/github/workflow/status/maxgfr/github-commit-push-file/build-test)](https://github.com/maxgfr/github-commit-push-file/actions/workflows/test-build.yml)
 
 `maxgfr/github-commit-push-file` is a [GitHub Action](https://github.com/features/actions) which lets you to commit and push a file to a repository.
 
