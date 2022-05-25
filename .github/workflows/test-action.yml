@@ -1,0 +1,20 @@
+name: 'action-test'
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'releases/*'
+
+jobs:
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Create a file
+        run: |
+          echo "GITHUB_SHA=${GITHUB_SHA}" >> sha.txt
+      - name: Commit and push the file
+        uses: ./
+        with:
+          commit_name: 'fix: add new line to sha.txt'

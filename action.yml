@@ -1,0 +1,14 @@
+name: GitHub Commit Push File
+description: Github action which lets you to commit and push a file to a repository.
+author: maxgfr
+branding:
+  icon: bookmark
+  color: blue
+runs:
+  using: node12
+  main: dist/index.js
+
+inputs:
+  commit_name:
+    required: true
+    description: Name of the commit
