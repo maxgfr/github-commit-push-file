@@ -5,10 +5,66 @@ branding:
   icon: bookmark
   color: blue
 runs:
-  using: node12
+  using: node20
   main: dist/index.js
 
 inputs:
-  commit_name:
+  commit_message:
     required: true
-    description: Name of the commit
+    description: The commit message
+
+  files:
+    required: false
+    description: Files to add (space-separated). Defaults to all files (-A)
+    default: '-A'
+
+  branch:
+    required: false
+    description: Target branch to push to. Defaults to the current branch
+    default: ''
+
+  author_name:
+    required: false
+    description: The name of the commit author. Defaults to GITHUB_ACTOR
+    default: ''
+
+  author_email:
+    required: false
+    description: The email of the commit author. Defaults to GITHUB_ACTOR@users.noreply.github.com
+    default: ''
+
+  sign_commit:
+    required: false
+    description: Whether to sign the commit with GPG (requires GPG key setup)
+    default: 'false'
+
+  gpg_private_key:
+    required: false
+    description: GPG private key (base64 encoded) for signing commits
+    default: ''
+
+  gpg_passphrase:
+    required: false
+    description: Passphrase for the GPG private key
+    default: ''
+
+  force_push:
+    required: false
+    description: Whether to force push
+    default: 'true'
+
+  skip_if_no_changes:
+    required: false
+    description: Skip commit and push if there are no changes
+    default: 'false'
+
+  commit_name:
+    required: false
+    description: '[DEPRECATED] Use commit_message instead'
+    default: ''
+
+outputs:
+  committed:
+    description: Whether a commit was made (true/false)
+  commit_sha:
+    description: The SHA of the commit (if committed)
