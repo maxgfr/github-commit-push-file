@@ -1,19 +1,28 @@
-const core = require('@actions/core')
-const exec = require('@actions/exec')
-
-jest.mock('@actions/core')
-jest.mock('@actions/exec')
+jest.mock('@actions/core', () => ({
+  getInput: jest.fn(),
+  setOutput: jest.fn(),
+  info: jest.fn(),
+  warning: jest.fn(),
+  setFailed: jest.fn()
+}))
+jest.mock('@actions/exec', () => ({
+  exec: jest.fn()
+}))
 
 // Reset mocks before each test
 beforeEach(() => {
   jest.resetAllMocks()
 })
 
-// Import the module after setting up mocks
-require('../main')
+// No top-level import; tests will import modules after setting up per-test mocks.
+
 
 describe('commit behavior', () => {
   test('skips commit when no changes detected and skip_if_no_changes is true', async () => {
+    jest.resetModules()
+    const core = require('@actions/core')
+    const exec = require('@actions/exec')
+
     core.getInput.mockImplementation((name) => {
       switch (name) {
         case 'commit_message':
@@ -37,14 +46,23 @@ describe('commit behavior', () => {
       return 0
     })
 
+    require('../main')
     // Wait briefly for async execution inside main
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await new Promise((resolve) => setTimeout(resolve, 250))
 
     // Ensure git commit not called
-    expect(exec.exec).not.toHaveBeenCalledWith('git', expect.arrayContaining(['commit']), expect.any(Object))
+    expect(exec.exec).not.toHaveBeenCalledWith(
+      'git',
+      expect.arrayContaining(['commit']),
+      expect.any(Object)
+    )
   })
 
   test('creates empty commit when no changes detected and skip_if_no_changes is false', async () => {
+    jest.resetModules()
+    const core = require('@actions/core')
+    const exec = require('@actions/exec')
+
     core.getInput.mockImplementation((name) => {
       switch (name) {
         case 'commit_message':
@@ -68,10 +86,13 @@ describe('commit behavior', () => {
       return 0
     })
 
+    require('../main')
     // Wait for module execution
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await new Promise((resolve) => setTimeout(resolve, 250))
 
     // Now check if exec.exec was called to commit with '--allow-empty'
+    // Debugging: print calls
+    
     const commitCall = exec.exec.mock.calls.find((c) => c[0] === 'git' && c[1] && c[1][0] === 'commit')
     expect(commitCall).toBeDefined()
     expect(commitCall[1]).toEqual(expect.arrayContaining(['--allow-empty']))
