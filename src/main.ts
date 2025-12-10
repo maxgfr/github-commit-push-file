@@ -209,7 +209,9 @@ const run = async (): Promise<void> => {
         core.setOutput('commit_sha', '')
         return
       } else {
-        core.warning('No changes detected, but proceeding anyway.')
+        core.warning(
+          'No changes detected. Creating an empty commit since skip_if_no_changes is false.'
+        )
       }
     }
 
@@ -218,6 +220,11 @@ const run = async (): Promise<void> => {
 
     if (inputs.signCommit) {
       commitArgs.push('-S')
+    }
+
+    // If there are no changes, ensure commit succeeds by allowing empty commits
+    if (!changes) {
+      commitArgs.push('--allow-empty')
     }
 
     await exec.exec('git', commitArgs)
