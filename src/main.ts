@@ -203,10 +203,14 @@ const run = async (): Promise<void> => {
     const changes = await hasChanges(inputs.files)
 
     if (!changes) {
-      core.info('No changes detected. Skipping commit and push.')
-      core.setOutput('committed', 'false')
-      core.setOutput('commit_sha', '')
-      return
+      if (inputs.skipIfNoChanges) {
+        core.info('No changes detected. Skipping commit and push.')
+        core.setOutput('committed', 'false')
+        core.setOutput('commit_sha', '')
+        return
+      } else {
+        core.warning('No changes detected, but proceeding anyway.')
+      }
     }
 
     // Build commit command
@@ -216,7 +220,11 @@ const run = async (): Promise<void> => {
       commitArgs.push('-S')
     }
 
-    // Only commit if there were staged changes (we already returned when no changes).
+    // If there are no changes and the user explicitly set skip_if_no_changes=false,
+    // allow an empty commit so the workflow can still produce a commit event.
+    if (!changes) {
+      commitArgs.push('--allow-empty')
+    }
 
     await exec.exec('git', commitArgs)
 

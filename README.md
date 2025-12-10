@@ -189,7 +189,7 @@ jobs:
 | `gpg_private_key` | string | no | - | GPG private key (base64 encoded) for signing commits |
 | `gpg_passphrase` | string | no | - | Passphrase for the GPG private key |
 | `force_push` | boolean | no | `true` | Whether to force push |
-| `skip_if_no_changes` | boolean | no | `false` | Skip commit and push if there are no changes |
+| `skip_if_no_changes` | boolean | no | `true` | Skip commit and push if there are no changes |
 
 ### Deprecated Inputs
 
