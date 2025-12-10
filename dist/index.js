@@ -189,25 +189,17 @@ const run = () => __awaiter(void 0, void 0, void 0, function* () {
         // Check for changes if skip_if_no_changes is enabled
         const changes = yield hasChanges(inputs.files);
         if (!changes) {
-            if (inputs.skipIfNoChanges) {
-                core.info('No changes detected. Skipping commit and push.');
-                core.setOutput('committed', 'false');
-                core.setOutput('commit_sha', '');
-                return;
-            }
-            else {
-                core.warning('No changes detected. Creating an empty commit since skip_if_no_changes is false.');
-            }
+            core.info('No changes detected. Skipping commit and push.');
+            core.setOutput('committed', 'false');
+            core.setOutput('commit_sha', '');
+            return;
         }
         // Build commit command
         const commitArgs = ['commit', '-m', inputs.commitMessage, '--no-verify'];
         if (inputs.signCommit) {
             commitArgs.push('-S');
         }
-        // If there are no changes, ensure commit succeeds by allowing empty commits
-        if (!changes) {
-            commitArgs.push('--allow-empty');
-        }
+        // Only commit if there were staged changes (we already returned when no changes).
         yield exec.exec('git', commitArgs);
         // Get the commit SHA
         let commitSha = '';

@@ -56,7 +56,7 @@ inputs:
   skip_if_no_changes:
     required: false
     description: Skip commit and push if there are no changes
-    default: 'false'
+    default: 'true'
 
   commit_name:
     required: false

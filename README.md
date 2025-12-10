@@ -65,7 +65,7 @@ jobs:
           skip_if_no_changes: 'true'
         ```
 
-        Note: If `skip_if_no_changes` is left as `false` (the default) and no changes are detected, the action will now create an empty commit (instead of failing) so that the workflow can still produce a commit event. To avoid committing when there are no changes, set `skip_if_no_changes: 'true'`.
+        Note: If no changes are detected, the action will skip the commit and push and set the `committed` output to `false`.
 
 ### With GPG Commit Signing
 
