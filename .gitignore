@@ -1,11 +1,6 @@
 # Dependency directory
 node_modules
 
-# Package manager locks
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
-
 # Logs
 logs
 *.log
