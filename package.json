@@ -11,7 +11,7 @@
     "format-check": "prettier --check '**/*.ts'",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
-    "package": "ncc build --source-map --license licenses.txt",
+    "package": "ncc build --source-map --license licenses.txt && rm -f dist/package.json",
     "test": "jest",
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
