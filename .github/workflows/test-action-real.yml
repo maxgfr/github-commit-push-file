@@ -348,6 +348,84 @@ jobs:
           fi
           echo "✅ SUCCESS: All files committed"
 
+  # Integration test - Append on each commit (like sha.txt pattern)
+  test-append-commits:
+    name: Test Append On Each Commit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: First append
+        run: echo "GITHUB_SHA=${GITHUB_SHA}" >> sha.txt
+
+      - name: First commit
+        id: commit1
+        uses: ./
+        with:
+          commit_message: 'test: first append to sha.txt'
+          files: 'sha.txt'
+          skip_if_no_changes: 'false'
+          branch: ${{ github.job }}
+
+      - name: Verify first commit
+        run: |
+          if [ "${{ steps.commit1.outputs.committed }}" != "true" ]; then
+            echo "ERROR: First commit should have been made"
+            exit 1
+          fi
+          echo "✅ First commit successful"
+
+      - name: Second append
+        run: echo "GITHUB_SHA=${GITHUB_SHA}" >> sha.txt
+
+      - name: Second commit
+        id: commit2
+        uses: ./
+        with:
+          commit_message: 'test: second append to sha.txt'
+          files: 'sha.txt'
+          skip_if_no_changes: 'false'
+          branch: ${{ github.job }}
+
+      - name: Verify second commit
+        run: |
+          if [ "${{ steps.commit2.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Second commit should have been made"
+            exit 1
+          fi
+          echo "✅ Second commit successful"
+
+      - name: Third append
+        run: echo "RUN_ID=${{ github.run_id }}" >> sha.txt
+
+      - name: Third commit
+        id: commit3
+        uses: ./
+        with:
+          commit_message: 'test: third append to sha.txt'
+          files: 'sha.txt'
+          skip_if_no_changes: 'false'
+          branch: ${{ github.job }}
+
+      - name: Verify third commit
+        run: |
+          if [ "${{ steps.commit3.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Third commit should have been made"
+            exit 1
+          fi
+          echo "✅ Third commit successful"
+
+      - name: Verify file has all lines
+        run: |
+          LINES=$(wc -l < sha.txt)
+          if [ "$LINES" -lt "3" ]; then
+            echo "ERROR: sha.txt should have at least 3 lines"
+            exit 1
+          fi
+          echo "✅ SUCCESS: All appends committed successfully"
+          cat sha.txt
+
   # Summary
   test-summary:
     name: Test Summary
@@ -364,7 +442,8 @@ jobs:
         test-empty-commit,
         test-multiple-commits,
         test-force-push,
-        test-all-files
+        test-all-files,
+        test-append-commits
       ]
     if: always()
     steps:
@@ -385,6 +464,7 @@ jobs:
           echo "| Multiple Commits | ${{ needs.test-multiple-commits.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Force Push | ${{ needs.test-force-push.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| All Files | ${{ needs.test-all-files.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Append On Each Commit | ${{ needs.test-append-commits.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
 
       - name: Check overall status
         run: |
@@ -398,7 +478,8 @@ jobs:
              [ "${{ needs.test-empty-commit.result }}" != "success" ] || \
              [ "${{ needs.test-multiple-commits.result }}" != "success" ] || \
              [ "${{ needs.test-force-push.result }}" != "success" ] || \
-             [ "${{ needs.test-all-files.result }}" != "success" ]; then
+             [ "${{ needs.test-all-files.result }}" != "success" ] || \
+             [ "${{ needs.test-append-commits.result }}" != "success" ]; then
             echo "❌ Some tests failed!"
             exit 1
           fi
