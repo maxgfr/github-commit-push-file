@@ -3,7 +3,6 @@
   "private": true,
   "description": "Github action which lets you to commit and push a file to a repository",
   "version": "2.0.0",
-  "type": "module",
   "main": "lib/main.js",
   "scripts": {
     "build": "tsc",
@@ -43,6 +42,7 @@
     "@actions/exec": "^1.1.1",
     "@types/jest": "^29.5.12",
     "@types/node": "^22.10.2",
+    "@eslint/js": "^9.17.0",
     "@typescript-eslint/eslint-plugin": "^8.19.1",
     "@typescript-eslint/parser": "^8.19.1",
     "@vercel/ncc": "^0.38.3",
