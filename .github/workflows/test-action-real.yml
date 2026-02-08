@@ -41,7 +41,7 @@ jobs:
 
       - name: Create test file
         run: |
-          echo "Test content $(date +%s)" > test-file.txt
+          echo "Test content ${{ github.run_id }}" > test-file.txt
           cat test-file.txt
 
       - name: Commit and push
@@ -50,6 +50,7 @@ jobs:
         with:
           commit_message: 'test: automated commit from workflow'
           force_push: 'true'
+          branch: ${{ github.job }}
 
       - name: Check outputs
         run: |
@@ -102,9 +103,9 @@ jobs:
 
       - name: Create multiple test files
         run: |
-          echo "File 1" > file1.txt
-          echo "File 2" > file2.txt
-          echo "Ignored" > ignored.txt
+          echo "File 1 ${{ github.run_id }}" > file1.txt
+          echo "File 2 ${{ github.run_id }}" > file2.txt
+          echo "Ignored ${{ github.run_id }}" > ignored.txt
 
       - name: Commit specific files only
         id: commit
@@ -113,6 +114,7 @@ jobs:
           commit_message: 'test: commit specific files'
           files: 'file1.txt file2.txt'
           force_push: 'true'
+          branch: ${{ github.job }}
 
       - name: Verify commit was made
         run: |
@@ -131,7 +133,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Create test file
-        run: echo "Author test" > author-test.txt
+        run: echo "Author test ${{ github.run_id }}" > author-test.txt
 
       - name: Commit with custom author
         id: commit
@@ -141,6 +143,7 @@ jobs:
           author_name: 'Test Bot'
           author_email: 'bot@example.com'
           force_push: 'true'
+          branch: ${{ github.job }}
 
       - name: Verify commit author
         run: |
@@ -163,7 +166,7 @@ jobs:
       - name: Create subdirectory structure
         run: |
           mkdir -p packages/my-package
-          echo "Package file" > packages/my-package/file.txt
+          echo "Package file ${{ github.run_id }}" > packages/my-package/file.txt
 
       - name: Commit from subdirectory
         id: commit
@@ -172,6 +175,7 @@ jobs:
           commit_message: 'test: commit from subdirectory'
           work_dir: 'packages/my-package'
           force_push: 'true'
+          branch: ${{ github.job }}
 
       - name: Verify commit was made
         run: |
@@ -191,9 +195,9 @@ jobs:
 
       - name: Create files with spaces in name
         run: |
-          echo "Content 1" > "file with spaces.txt"
-          echo "Content 2" > "another file.txt"
-          echo "Content 3" > normal-file.txt
+          echo "Content 1 ${{ github.run_id }}" > "file with spaces.txt"
+          echo "Content 2 ${{ github.run_id }}" > "another file.txt"
+          echo "Content 3 ${{ github.run_id }}" > normal-file.txt
 
       - name: Commit files with spaces
         id: commit
@@ -202,6 +206,7 @@ jobs:
           commit_message: 'test: files with spaces'
           files: '"file with spaces.txt" "another file.txt" normal-file.txt'
           force_push: 'true'
+          branch: ${{ github.job }}
 
       - name: Verify commit was made
         run: |
@@ -226,6 +231,7 @@ jobs:
           commit_message: 'test: empty commit'
           skip_if_no_changes: 'false'
           force_push: 'true'
+          branch: ${{ github.job }}
 
       - name: Verify empty commit was made
         run: |
@@ -249,12 +255,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Create test file
+        run: echo "Multi commit test ${{ github.run_id }}" > multi-commit-test.txt
+
       - name: First commit
         id: commit1
         uses: ./
         with:
           commit_message: 'test: first commit'
           force_push: 'true'
+          branch: ${{ github.job }}
 
       - name: Second commit
         id: commit2
@@ -262,6 +272,7 @@ jobs:
         with:
           commit_message: 'test: second commit'
           force_push: 'true'
+          branch: ${{ github.job }}
 
       - name: Verify both commits
         run: |
@@ -283,7 +294,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Create test file
-        run: echo "Force push test" > force-test.txt
+        run: echo "Force push test ${{ github.run_id }}" > force-test.txt
 
       - name: Commit with force push enabled
         id: commit
@@ -291,6 +302,7 @@ jobs:
         with:
           commit_message: 'test: force push'
           force_push: 'true'
+          branch: ${{ github.job }}
 
       - name: Verify commit was made
         run: |
@@ -310,10 +322,10 @@ jobs:
 
       - name: Create multiple files
         run: |
-          echo "File 1" > test1.txt
-          echo "File 2" > test2.txt
+          echo "File 1 ${{ github.run_id }}" > test1.txt
+          echo "File 2 ${{ github.run_id }}" > test2.txt
           mkdir -p subdir
-          echo "File 3" > subdir/test3.txt
+          echo "File 3 ${{ github.run_id }}" > subdir/test3.txt
 
       - name: Commit all files (default)
         id: commit
@@ -321,6 +333,7 @@ jobs:
         with:
           commit_message: 'test: commit all files'
           force_push: 'true'
+          branch: ${{ github.job }}
 
       - name: Verify all files were committed
         run: |
