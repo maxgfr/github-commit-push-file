@@ -5,7 +5,7 @@ branding:
   icon: bookmark
   color: blue
 runs:
-  using: node20
+  using: node24
   main: dist/index.js
 
 inputs:
@@ -57,6 +57,10 @@ inputs:
     required: false
     description: Skip commit and push if there are no changes
     default: 'true'
+
+  work_dir:
+    required: false
+    description: Working directory to execute git commands in. Defaults to the repository root
 
   commit_name:
     required: false

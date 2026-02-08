@@ -18,23 +18,30 @@ on:
 
 jobs:
   check-dist:
+    name: Check dist/
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set Node.js 16.x
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: 16.x
+          node-version: 24
+          cache: 'pnpm'
 
       - name: Install dependencies
-        run: yarn --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Rebuild the dist/ directory
         run: |
-          yarn build
-          yarn package
+          pnpm run build
+          pnpm run package
 
       - name: Compare the expected and actual dist/ directories
         run: |

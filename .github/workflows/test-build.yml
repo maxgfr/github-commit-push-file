@@ -1,17 +1,45 @@
-name: 'build-test'
-on: # rebuild any PRs and main branch changes
+name: Build and Test
+
+on:
   pull_request:
   push:
     branches:
       - main
       - 'releases/*'
+  workflow_dispatch:
 
 jobs:
-  build: # make sure build/ci work properly
-    runs-on: ubuntu-latest
+  build-and-test:
+    name: Build and Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v3
-      - run: |
-          yarn
-      - run: |
-          yarn all
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm run all
+
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage/lcov.info
+          flags: unittests
+          name: codecov-umbrella

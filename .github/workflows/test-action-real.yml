@@ -1,0 +1,391 @@
+name: Test Action
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  # Unit tests
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run unit tests
+        run: pnpm test
+
+  # Integration tests - Basic usage
+  test-basic:
+    name: Test Basic Usage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file
+        run: |
+          echo "Test content $(date +%s)" > test-file.txt
+          cat test-file.txt
+
+      - name: Commit and push
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: automated commit from workflow'
+          force_push: 'false'
+
+      - name: Check outputs
+        run: |
+          echo "Committed: ${{ steps.commit.outputs.committed }}"
+          echo "Commit SHA: ${{ steps.commit.outputs.commit_sha }}"
+
+      - name: Verify commit was made
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Commit should have been made"
+            exit 1
+          fi
+          if [ -z "${{ steps.commit.outputs.commit_sha }}" ]; then
+            echo "ERROR: Commit SHA should not be empty"
+            exit 1
+          fi
+          echo "✅ SUCCESS: Action completed correctly"
+
+  # Integration test - Skip when no changes
+  test-skip-no-changes:
+    name: Test Skip When No Changes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Try to commit without changes
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: this should be skipped'
+          skip_if_no_changes: 'true'
+
+      - name: Verify no commit was made
+        run: |
+          echo "Committed: ${{ steps.commit.outputs.committed }}"
+          if [ "${{ steps.commit.outputs.committed }}" != "false" ]; then
+            echo "ERROR: No commit should have been made"
+            exit 1
+          fi
+          echo "✅ SUCCESS: Action correctly skipped when no changes"
+
+  # Integration test - Specific files
+  test-specific-files:
+    name: Test Specific Files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create multiple test files
+        run: |
+          echo "File 1" > file1.txt
+          echo "File 2" > file2.txt
+          echo "Ignored" > ignored.txt
+
+      - name: Commit specific files only
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: commit specific files'
+          files: 'file1.txt file2.txt'
+          force_push: 'false'
+
+      - name: Verify commit was made
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Commit should have been made"
+            exit 1
+          fi
+          echo "✅ SUCCESS: Specific files committed"
+
+  # Integration test - Custom author
+  test-custom-author:
+    name: Test Custom Author
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file
+        run: echo "Author test" > author-test.txt
+
+      - name: Commit with custom author
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: custom author'
+          author_name: 'Test Bot'
+          author_email: 'bot@example.com'
+          force_push: 'false'
+
+      - name: Verify commit author
+        run: |
+          AUTHOR=$(git log -1 --format='%an <%ae>')
+          echo "Commit author: $AUTHOR"
+          if [ "$AUTHOR" != "Test Bot <bot@example.com>" ]; then
+            echo "ERROR: Author should be 'Test Bot <bot@example.com>'"
+            exit 1
+          fi
+          echo "✅ SUCCESS: Custom author set correctly"
+
+  # Integration test - Working directory
+  test-work-dir:
+    name: Test Working Directory
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create subdirectory structure
+        run: |
+          mkdir -p packages/my-package
+          echo "Package file" > packages/my-package/file.txt
+
+      - name: Commit from subdirectory
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: commit from subdirectory'
+          work_dir: 'packages/my-package'
+          force_push: 'false'
+
+      - name: Verify commit was made
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Commit should have been made"
+            exit 1
+          fi
+          echo "✅ SUCCESS: Working directory feature works"
+
+  # Integration test - Files with spaces
+  test-files-with-spaces:
+    name: Test Files with Spaces
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create files with spaces in name
+        run: |
+          echo "Content 1" > "file with spaces.txt"
+          echo "Content 2" > "another file.txt"
+          echo "Content 3" > normal-file.txt
+
+      - name: Commit files with spaces
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: files with spaces'
+          files: '"file with spaces.txt" "another file.txt" normal-file.txt'
+          force_push: 'false'
+
+      - name: Verify commit was made
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Commit should have been made"
+            exit 1
+          fi
+          echo "✅ SUCCESS: Files with spaces handled correctly"
+
+  # Integration test - Empty commit
+  test-empty-commit:
+    name: Test Empty Commit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create empty commit
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: empty commit'
+          skip_if_no_changes: 'false'
+          force_push: 'false'
+
+      - name: Verify empty commit was made
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Empty commit should have been made"
+            exit 1
+          fi
+          # Verify it's actually an empty commit
+          if git diff --quiet HEAD~1 HEAD; then
+            echo "✅ SUCCESS: Empty commit created correctly"
+          else
+            echo "ERROR: Commit should have no changes"
+            exit 1
+          fi
+
+  # Integration test - Multiple commits in sequence
+  test-multiple-commits:
+    name: Test Multiple Commits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: First commit
+        id: commit1
+        uses: ./
+        with:
+          commit_message: 'test: first commit'
+          force_push: 'false'
+
+      - name: Second commit
+        id: commit2
+        uses: ./
+        with:
+          commit_message: 'test: second commit'
+          force_push: 'false'
+
+      - name: Verify both commits
+        run: |
+          if [ "${{ steps.commit1.outputs.committed }}" != "true" ]; then
+            echo "ERROR: First commit should have been made"
+            exit 1
+          fi
+          if [ "${{ steps.commit2.outputs.committed }}" != "false" ]; then
+            echo "Note: Second commit was skipped (no changes)"
+          fi
+          echo "✅ SUCCESS: Multiple commits handled"
+
+  # Integration test - Force push
+  test-force-push:
+    name: Test Force Push Option
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file
+        run: echo "Force push test" > force-test.txt
+
+      - name: Commit with force push enabled
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: force push'
+          force_push: 'true'
+
+      - name: Verify commit was made
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Commit should have been made"
+            exit 1
+          fi
+          echo "✅ SUCCESS: Force push works"
+
+  # Integration test - All files (default)
+  test-all-files:
+    name: Test All Files Default
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create multiple files
+        run: |
+          echo "File 1" > test1.txt
+          echo "File 2" > test2.txt
+          mkdir -p subdir
+          echo "File 3" > subdir/test3.txt
+
+      - name: Commit all files (default)
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: commit all files'
+          force_push: 'false'
+
+      - name: Verify all files were committed
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Commit should have been made"
+            exit 1
+          fi
+          # Check if files exist in the repo
+          if [ ! -f test1.txt ] || [ ! -f test2.txt ] || [ ! -f subdir/test3.txt ]; then
+            echo "ERROR: Not all files were committed"
+            exit 1
+          fi
+          echo "✅ SUCCESS: All files committed"
+
+  # Summary
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs:
+      [
+        unit-tests,
+        test-basic,
+        test-skip-no-changes,
+        test-specific-files,
+        test-custom-author,
+        test-work-dir,
+        test-files-with-spaces,
+        test-empty-commit,
+        test-multiple-commits,
+        test-force-push,
+        test-all-files
+      ]
+    if: always()
+    steps:
+      - name: Display results
+        run: |
+          echo "## Test Results Summary :test_tube:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Unit Tests | ${{ needs.unit-tests.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Basic Usage | ${{ needs.test-basic.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Skip No Changes | ${{ needs.test-skip-no-changes.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Specific Files | ${{ needs.test-specific-files.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Custom Author | ${{ needs.test-custom-author.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Work Directory | ${{ needs.test-work-dir.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Files with Spaces | ${{ needs.test-files-with-spaces.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Empty Commit | ${{ needs.test-empty-commit.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Multiple Commits | ${{ needs.test-multiple-commits.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Force Push | ${{ needs.test-force-push.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| All Files | ${{ needs.test-all-files.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check overall status
+        run: |
+          if [ "${{ needs.unit-tests.result }}" != "success" ] || \
+             [ "${{ needs.test-basic.result }}" != "success" ] || \
+             [ "${{ needs.test-skip-no-changes.result }}" != "success" ] || \
+             [ "${{ needs.test-specific-files.result }}" != "success" ] || \
+             [ "${{ needs.test-custom-author.result }}" != "success" ] || \
+             [ "${{ needs.test-work-dir.result }}" != "success" ] || \
+             [ "${{ needs.test-files-with-spaces.result }}" != "success" ] || \
+             [ "${{ needs.test-empty-commit.result }}" != "success" ] || \
+             [ "${{ needs.test-multiple-commits.result }}" != "success" ] || \
+             [ "${{ needs.test-force-push.result }}" != "success" ] || \
+             [ "${{ needs.test-all-files.result }}" != "success" ]; then
+            echo "❌ Some tests failed!"
+            exit 1
+          fi
+          echo "✅ All tests passed!"

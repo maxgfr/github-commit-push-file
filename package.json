@@ -2,15 +2,20 @@
   "name": "@maxgfr/github-commit-push-file",
   "private": true,
   "description": "Github action which lets you to commit and push a file to a repository",
+  "version": "2.0.0",
+  "type": "module",
   "main": "lib/main.js",
   "scripts": {
     "build": "tsc",
     "format": "prettier --write '**/*.ts'",
     "format-check": "prettier --check '**/*.ts'",
     "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
     "package": "ncc build --source-map --license licenses.txt",
-    "test": "jest --passWithNoTests",
-    "all": "npm run build && npm run package && npm run lint && npm test",
+    "test": "jest",
+    "test:coverage": "jest --coverage",
+    "test:watch": "jest --watch",
+    "all": "pnpm run build && pnpm run package && pnpm run lint && pnpm run test",
     "prepare": "husky install",
     "lint-staged": "lint-staged"
   },
@@ -23,31 +28,55 @@
     "actions",
     "commit",
     "push",
-    "file"
+    "file",
+    "gpg",
+    "git"
   ],
   "author": "maxgfr",
   "license": "MIT",
   "dependencies": {
-    "@actions/core": "1.6.0",
-    "@actions/exec": "1.1.1"
+    "@actions/core": "^1.11.1",
+    "@actions/exec": "^1.1.1"
   },
   "devDependencies": {
-    "@types/node": "17.0.21",
-    "@typescript-eslint/parser": "5.15.0",
-    "@vercel/ncc": "0.33.3",
-    "eslint": "8.12.0",
-    "eslint-plugin-github": "4.3.6",
-    "eslint-plugin-jest": "27.0.4",
-    "eslint-plugin-prettier": "4.0.0",
-    "husky": "8.0.1",
-    "jest": "29.0.3",
-    "js-yaml": "4.1.0",
-    "lint-staged": "13.0.2",
-    "prettier": "2.6.0",
-    "ts-jest": "29.0.2",
-    "typescript": "4.6.2"
+    "@actions/core": "^1.11.1",
+    "@actions/exec": "^1.1.1",
+    "@types/jest": "^29.5.12",
+    "@types/node": "^22.10.2",
+    "@typescript-eslint/eslint-plugin": "^8.19.1",
+    "@typescript-eslint/parser": "^8.19.1",
+    "@vercel/ncc": "^0.38.3",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-github": "^5.1.1",
+    "eslint-plugin-jest": "^28.10.0",
+    "globals": "^15.13.0",
+    "husky": "^9.1.7",
+    "jest": "^29.7.0",
+    "js-yaml": "^4.1.0",
+    "lint-staged": "^15.2.11",
+    "prettier": "^3.4.2",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.19.1"
   },
   "lint-staged": {
-    "*.ts": "npm run format --fix"
-  }
+    "*.ts": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
+  "pnpm": {
+    "overrides": {
+      "undici": "^6.23.0"
+    }
+  },
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@10.29.1"
 }

@@ -5,13 +5,14 @@
 ## Features
 
 - ✅ Commit and push files to a repository
-- ✅ GPG commit signing support
+- ✅ GPG commit signing support with enhanced validation
 - ✅ Custom author name and email
-- ✅ Selective file staging (specific files or all)
+- ✅ Selective file staging (specific files or all, with quote support for filenames with spaces)
 - ✅ Target branch configuration
 - ✅ Skip if no changes option
 - ✅ Force push option
 - ✅ Outputs for commit status and SHA
+- ✅ Working directory support for monorepos
 
 ## Usage
 
@@ -42,7 +43,7 @@ jobs:
 
 This is useful for scheduled workflows where you only want to commit if there are actual changes:
 
-```yaml
+````yaml
 name: 'scheduled-update'
 on:
   schedule:
@@ -66,6 +67,32 @@ jobs:
         ```
 
         Note: If no changes are detected, the action will skip the commit and push and set the `committed` output to `false`.
+
+### With Working Directory
+
+This is useful for monorepos or when you want to commit files in a specific subdirectory:
+
+```yaml
+name: 'commit-in-subdirectory'
+on:
+  push:
+    branches: [main]
+
+jobs:
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create a file in subdirectory
+        run: echo "Content" >> packages/my-package/file.txt
+
+      - name: Commit and push in subdirectory
+        uses: maxgfr/github-commit-push-file@main
+        with:
+          commit_message: 'chore: update package file'
+          work_dir: 'packages/my-package'
+````
 
 ### With GPG Commit Signing
 
@@ -178,30 +205,31 @@ jobs:
 
 ## Inputs
 
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `commit_message` | string | **yes** | - | The commit message |
-| `files` | string | no | `-A` | Files to add (space-separated). Use `-A` for all files |
-| `branch` | string | no | current branch | Target branch to push to |
-| `author_name` | string | no | `GITHUB_ACTOR` | The name of the commit author |
-| `author_email` | string | no | `GITHUB_ACTOR@users.noreply.github.com` | The email of the commit author |
-| `sign_commit` | boolean | no | `false` | Whether to sign the commit with GPG |
-| `gpg_private_key` | string | no | - | GPG private key (base64 encoded) for signing commits |
-| `gpg_passphrase` | string | no | - | Passphrase for the GPG private key |
-| `force_push` | boolean | no | `true` | Whether to force push |
-| `skip_if_no_changes` | boolean | no | `true` | Skip commit and push if there are no changes |
+| Name                 | Type    | Required | Default                                 | Description                                                                               |
+| -------------------- | ------- | -------- | --------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `commit_message`     | string  | **yes**  | -                                       | The commit message                                                                        |
+| `files`              | string  | no       | `-A`                                    | Files to add (space-separated). Use `-A` for all files. Supports quoted paths with spaces |
+| `branch`             | string  | no       | current branch                          | Target branch to push to                                                                  |
+| `author_name`        | string  | no       | `GITHUB_ACTOR`                          | The name of the commit author                                                             |
+| `author_email`       | string  | no       | `GITHUB_ACTOR@users.noreply.github.com` | The email of the commit author                                                            |
+| `sign_commit`        | boolean | no       | `false`                                 | Whether to sign the commit with GPG                                                       |
+| `gpg_private_key`    | string  | no       | -                                       | GPG private key (base64 encoded) for signing commits                                      |
+| `gpg_passphrase`     | string  | no       | -                                       | Passphrase for the GPG private key                                                        |
+| `force_push`         | boolean | no       | `true`                                  | Whether to force push                                                                     |
+| `skip_if_no_changes` | boolean | no       | `true`                                  | Skip commit and push if there are no changes                                              |
+| `work_dir`           | string  | no       | repository root                         | Working directory to execute git commands in                                              |
 
 ### Deprecated Inputs
 
-| Name | Type | Description |
-|------|------|-------------|
+| Name          | Type   | Description                                  |
+| ------------- | ------ | -------------------------------------------- |
 | `commit_name` | string | **Deprecated**: Use `commit_message` instead |
 
 ## Outputs
 
-| Name | Type | Description |
-|------|------|-------------|
-| `committed` | string | Whether a commit was made (`true` or `false`) |
+| Name         | Type   | Description                                         |
+| ------------ | ------ | --------------------------------------------------- |
+| `committed`  | string | Whether a commit was made (`true` or `false`)       |
 | `commit_sha` | string | The SHA of the commit (empty if no commit was made) |
 
 ## GPG Signing Setup
@@ -209,11 +237,13 @@ jobs:
 To use GPG commit signing, you need to:
 
 1. **Generate a GPG key** (if you don't have one):
+
    ```bash
    gpg --full-generate-key
    ```
 
 2. **Export your private key** (base64 encoded):
+
    ```bash
    gpg --armor --export-secret-keys YOUR_KEY_ID | base64 -w 0
    ```
@@ -234,8 +264,181 @@ To use GPG commit signing, you need to:
 If you're upgrading from an older version, note these changes:
 
 - `commit_name` has been renamed to `commit_message` (the old name still works but is deprecated)
-- New features: `files`, `branch`, `author_name`, `author_email`, `sign_commit`, `gpg_private_key`, `gpg_passphrase`, `force_push`, `skip_if_no_changes`
+- New features: `files`, `branch`, `author_name`, `author_email`, `sign_commit`, `gpg_private_key`, `gpg_passphrase`, `force_push`, `skip_if_no_changes`, `work_dir`
 - New outputs: `committed`, `commit_sha`
+- Enhanced GPG key validation
+- Improved error handling
+
+## Internal Functions Documentation
+
+The action includes several utility functions for enhanced reliability:
+
+### `isValidBase64(str: string): boolean`
+
+**Purpose**: Validates if a string is properly base64 encoded.
+
+**Parameters**:
+
+- `str` - String to validate
+
+**Returns**: `true` if valid base64, `false` otherwise
+
+**Effects**: None (pure function)
+
+**Used by**: `setupGpg()` for validating GPG keys
+
+---
+
+### `safeUnlinkSync(filePath: string): void`
+
+**Purpose**: Safely removes a file if it exists, without throwing errors.
+
+**Parameters**:
+
+- `filePath` - Path to the file to remove
+
+**Returns**: None
+
+**Effects**: Removes the file at `filePath` if it exists
+
+**Used by**: `setupGpg()` for cleanup in finally block
+
+---
+
+### `safeRmdirSync(dirPath: string): void`
+
+**Purpose**: Safely removes a directory if it exists and is empty, without throwing errors.
+
+**Parameters**:
+
+- `dirPath` - Path to the directory to remove
+
+**Returns**: None
+
+**Effects**: Removes the directory at `dirPath` if it exists
+
+**Used by**: `setupGpg()` for cleanup in finally block
+
+---
+
+### `safeMkdirSync(dirPath: string, mode: number): void`
+
+**Purpose**: Safely creates a directory with proper permissions if it doesn't exist.
+
+**Parameters**:
+
+- `dirPath` - Path to the directory to create
+- `mode` - File permissions mode (e.g., `0o700` for private directory)
+
+**Returns**: None
+
+**Effects**: Creates the directory at `dirPath` with specified permissions if it doesn't exist
+
+**Used by**: `setupGpg()` for creating `.gnupg` directory
+
+---
+
+### `getInputs(): ActionInputs`
+
+**Purpose**: Gets and validates action inputs from environment variables.
+
+**Parameters**: None
+
+**Returns**: `ActionInputs` object containing all configuration
+
+**Effects**:
+
+- Validates `commit_message` is provided (throws error if missing)
+- Trims whitespace from commit message
+- Logs warning for deprecated `commit_name` input
+
+**Throws**: Error if `commit_message` is missing
+
+---
+
+### `setupGpg(gpgPrivateKey: string, gpgPassphrase: string): Promise<string>`
+
+**Purpose**: Sets up GPG signing for git commits.
+
+**Parameters**:
+
+- `gpgPrivateKey` - Base64 encoded GPG private key
+- `gpgPassphrase` - Optional passphrase for the GPG key
+
+**Returns**: The GPG key ID
+
+**Effects**:
+
+- Validates base64 encoding of the key
+- Validates decoded key is a valid PGP key
+- Imports the key into GPG
+- Configures git to use the key for signing
+- Creates temporary files that are cleaned up in finally block
+
+**Throws**: Error if:
+
+- GPG key is not valid base64
+- Decoded key is not a valid PGP key
+- Key ID cannot be extracted
+- GPG commands fail
+
+**Side Effects**:
+
+- Creates and removes temporary files
+- Modifies git configuration
+- May modify `.gnupg` directory in user home
+
+---
+
+### `hasChanges(files: string): Promise<boolean>`
+
+**Purpose**: Adds files to git staging area and checks for changes.
+
+**Parameters**:
+
+- `files` - Files pattern ('-A' for all files, or space-separated list with quote support)
+
+**Returns**: `true` if there are staged changes, `false` otherwise
+
+**Effects**:
+
+- Adds specified files to git staging area
+- Runs `git diff --cached --quiet` to detect changes
+
+**Side Effects**:
+
+- Modifies git index (staging area)
+
+---
+
+### `run(): Promise<void>`
+
+**Purpose**: Main execution function for the GitHub Action.
+
+**Parameters**: None
+
+**Returns**: Promise that resolves when complete
+
+**Effects**:
+
+- Gets and validates inputs
+- Changes to working directory if specified
+- Configures git user
+- Sets up GPG signing if enabled
+- Checks for changes
+- Creates commit (or empty commit if no changes and `skip_if_no_changes=false`)
+- Gets commit SHA
+- Pushes to remote
+- Sets action outputs
+
+**Throws**: Error for various failure conditions, all caught and reported via `core.setFailed()`
+
+**Side Effects**:
+
+- May change current working directory
+- Modifies git configuration
+- Creates git commits
+- Pushes to remote repository
 
 ## License
 
