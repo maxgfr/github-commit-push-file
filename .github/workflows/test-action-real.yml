@@ -49,7 +49,7 @@ jobs:
         uses: ./
         with:
           commit_message: 'test: automated commit from workflow'
-          force_push: 'false'
+          force_push: 'true'
 
       - name: Check outputs
         run: |
@@ -112,7 +112,7 @@ jobs:
         with:
           commit_message: 'test: commit specific files'
           files: 'file1.txt file2.txt'
-          force_push: 'false'
+          force_push: 'true'
 
       - name: Verify commit was made
         run: |
@@ -140,7 +140,7 @@ jobs:
           commit_message: 'test: custom author'
           author_name: 'Test Bot'
           author_email: 'bot@example.com'
-          force_push: 'false'
+          force_push: 'true'
 
       - name: Verify commit author
         run: |
@@ -171,7 +171,7 @@ jobs:
         with:
           commit_message: 'test: commit from subdirectory'
           work_dir: 'packages/my-package'
-          force_push: 'false'
+          force_push: 'true'
 
       - name: Verify commit was made
         run: |
@@ -201,7 +201,7 @@ jobs:
         with:
           commit_message: 'test: files with spaces'
           files: '"file with spaces.txt" "another file.txt" normal-file.txt'
-          force_push: 'false'
+          force_push: 'true'
 
       - name: Verify commit was made
         run: |
@@ -225,7 +225,7 @@ jobs:
         with:
           commit_message: 'test: empty commit'
           skip_if_no_changes: 'false'
-          force_push: 'false'
+          force_push: 'true'
 
       - name: Verify empty commit was made
         run: |
@@ -254,14 +254,14 @@ jobs:
         uses: ./
         with:
           commit_message: 'test: first commit'
-          force_push: 'false'
+          force_push: 'true'
 
       - name: Second commit
         id: commit2
         uses: ./
         with:
           commit_message: 'test: second commit'
-          force_push: 'false'
+          force_push: 'true'
 
       - name: Verify both commits
         run: |
@@ -320,7 +320,7 @@ jobs:
         uses: ./
         with:
           commit_message: 'test: commit all files'
-          force_push: 'false'
+          force_push: 'true'
 
       - name: Verify all files were committed
         run: |
