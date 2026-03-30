@@ -137,6 +137,9 @@ const getInputs = () => {
                 throw new Error('commits must be a JSON array');
             }
             commits = parsed;
+            if (commits.length === 0) {
+                throw new Error('commits array must not be empty');
+            }
             for (const c of commits) {
                 if (!c.message) {
                     throw new Error('Each commit in the commits array must have a "message" field');
@@ -151,14 +154,17 @@ const getInputs = () => {
         }
     }
     if (!commitMessage && commits.length === 0) {
-        throw new Error('commit_message is required (or provide a commits JSON array).');
+        throw new Error('commit_message is required (or provide a non-empty commits JSON array).');
     }
     if (commitMessage) {
         commitMessage = commitMessage.trim();
     }
-    const authorName = core.getInput('author_name') ||
-        process.env.GITHUB_ACTOR ||
-        'github-actions';
+    const amend = core.getInput('amend') === 'true';
+    if (amend && commits.length > 0) {
+        throw new Error('amend cannot be used with the commits array');
+    }
+    const maxRetriesInput = parseInt(core.getInput('max_retries') || '3', 10);
+    const authorName = core.getInput('author_name') || process.env.GITHUB_ACTOR || 'github-actions';
     const authorEmail = core.getInput('author_email') ||
         `${process.env.GITHUB_ACTOR || 'github-actions'}@users.noreply.github.com`;
     return {
@@ -184,7 +190,13 @@ const getInputs = () => {
         prBaseBranch: core.getInput('pr_base_branch'),
         prBody: core.getInput('pr_body'),
         token: core.getInput('token'),
-        commits
+        commits,
+        amend,
+        retryOnConflict: core.getInput('retry_on_conflict') === 'true',
+        maxRetries: Math.max(1, isNaN(maxRetriesInput) ? 3 : maxRetriesInput),
+        excludeFiles: core.getInput('exclude_files'),
+        pathspecFromFile: core.getInput('pathspec_from_file'),
+        commitTimestamp: core.getInput('commit_timestamp')
     };
 };
 exports.getInputs = getInputs;
@@ -261,8 +273,12 @@ const setupGpg = async (gpgPrivateKey, gpgPassphrase) => {
     }
 };
 exports.setupGpg = setupGpg;
-const hasChanges = async (files) => {
-    if (files === '-A') {
+const hasChanges = async (files, excludeFiles, pathspecFromFile) => {
+    // Stage files
+    if (pathspecFromFile) {
+        await exec.exec('git', ['add', '--pathspec-from-file', pathspecFromFile]);
+    }
+    else if (files === '-A') {
         await exec.exec('git', ['add', '-A']);
     }
     else {
@@ -270,6 +286,17 @@ const hasChanges = async (files) => {
         for (const file of fileList) {
             if (file.length > 0) {
                 await exec.exec('git', ['add', file]);
+            }
+        }
+    }
+    // Unstage excluded patterns
+    if (excludeFiles) {
+        const patterns = parseFileList(excludeFiles);
+        for (const pattern of patterns) {
+            if (pattern.length > 0) {
+                await exec.exec('git', ['reset', 'HEAD', '--', pattern], {
+                    ignoreReturnCode: true
+                });
             }
         }
     }
@@ -281,7 +308,7 @@ const hasChanges = async (files) => {
 exports.hasChanges = hasChanges;
 /**
  * Resolves the target branch from inputs and environment variables.
- * Properly handles both refs/heads/ and refs/tags/ prefixes.
+ * Properly handles refs/heads/, refs/tags/, and unknown ref formats.
  */
 const resolveBranch = (inputBranch) => {
     if (inputBranch)
@@ -296,20 +323,35 @@ const resolveBranch = (inputBranch) => {
     if (githubRef.startsWith('refs/tags/')) {
         return githubRef.replace('refs/tags/', '');
     }
+    // Unknown ref format (e.g. refs/pull/123/merge) falls back to main
     return 'main';
 };
 exports.resolveBranch = resolveBranch;
-const performCommit = async (message, body, files, signCommit, skipHooks, skipIfNoChanges, dryRun) => {
-    const changes = await hasChanges(files);
-    if (!changes) {
+const performCommit = async (options) => {
+    const { message, body, files, signCommit, skipHooks, skipIfNoChanges, dryRun, amend, excludeFiles, pathspecFromFile, commitTimestamp } = options;
+    const changes = await hasChanges(files, excludeFiles, pathspecFromFile);
+    if (!changes && !amend) {
         if (skipIfNoChanges) {
             core.info('No changes detected. Skipping commit.');
-            return { committed: false, sha: '' };
+            return { committed: false, sha: '', changedFiles: [] };
         }
         else {
             core.warning('No changes detected, but proceeding anyway.');
         }
     }
+    // Capture list of changed files before commit
+    let changedFilesOutput = '';
+    await exec.exec('git', ['diff', '--cached', '--name-only'], {
+        listeners: {
+            stdout: (data) => {
+                changedFilesOutput += data.toString();
+            }
+        }
+    });
+    const changedFiles = changedFilesOutput
+        .trim()
+        .split('\n')
+        .filter(f => f.length > 0);
     if (dryRun) {
         let stagedFiles = '';
         await exec.exec('git', ['diff', '--cached', '--name-status'], {
@@ -327,23 +369,35 @@ const performCommit = async (message, body, files, signCommit, skipHooks, skipIf
             core.info('[DRY RUN] No files staged (would be an empty commit)');
         }
         await exec.exec('git', ['reset'], { ignoreReturnCode: true });
-        return { committed: false, sha: '' };
+        return { committed: false, sha: '', changedFiles: [] };
     }
     let fullMessage = message;
     if (body) {
         fullMessage += '\n\n' + body;
     }
-    const commitArgs = ['commit', '-m', fullMessage];
+    const commitArgs = amend
+        ? ['commit', '--amend', '-m', fullMessage]
+        : ['commit', '-m', fullMessage];
     if (skipHooks) {
         commitArgs.push('--no-verify');
     }
     if (signCommit) {
         commitArgs.push('-S');
     }
-    if (!changes) {
+    if (!changes && !amend) {
         commitArgs.push('--allow-empty');
     }
+    // Set commit timestamp if provided
+    if (commitTimestamp) {
+        process.env.GIT_AUTHOR_DATE = commitTimestamp;
+        process.env.GIT_COMMITTER_DATE = commitTimestamp;
+    }
     await exec.exec('git', commitArgs);
+    // Clean up timestamp env vars
+    if (commitTimestamp) {
+        delete process.env.GIT_AUTHOR_DATE;
+        delete process.env.GIT_COMMITTER_DATE;
+    }
     let commitSha = '';
     await exec.exec('git', ['rev-parse', 'HEAD'], {
         listeners: {
@@ -356,7 +410,7 @@ const performCommit = async (message, body, files, signCommit, skipHooks, skipIf
     if (!commitSha) {
         throw new Error('Failed to get commit SHA after commit');
     }
-    return { committed: true, sha: commitSha };
+    return { committed: true, sha: commitSha, changedFiles };
 };
 exports.performCommit = performCommit;
 const createPullRequest = async (token, title, body, head, base) => {
@@ -446,17 +500,35 @@ const run = async () => {
             core.info('GPG signing enabled');
         }
         const targetBranch = resolveBranch(inputs.branch);
+        // Build commit options shared across single/multi mode
+        const baseCommitOpts = {
+            signCommit: inputs.signCommit,
+            skipHooks: inputs.skipHooks,
+            skipIfNoChanges: inputs.skipIfNoChanges,
+            dryRun: inputs.dryRun,
+            amend: inputs.amend,
+            excludeFiles: inputs.excludeFiles,
+            pathspecFromFile: inputs.pathspecFromFile,
+            commitTimestamp: inputs.commitTimestamp
+        };
         // Perform commits
-        let lastResult = { committed: false, sha: '' };
+        let lastResult = { committed: false, sha: '', changedFiles: [] };
         const allShas = [];
+        const allChangedFiles = [];
         if (inputs.commits.length > 0) {
             core.info(`Processing ${inputs.commits.length} commits...`);
             for (let i = 0; i < inputs.commits.length; i++) {
                 const commit = inputs.commits[i];
                 core.info(`Commit ${i + 1}/${inputs.commits.length}: ${commit.message}`);
-                const result = await performCommit(commit.message, commit.body || '', commit.files || inputs.files, inputs.signCommit, inputs.skipHooks, inputs.skipIfNoChanges, inputs.dryRun);
+                const result = await performCommit({
+                    ...baseCommitOpts,
+                    message: commit.message,
+                    body: commit.body || '',
+                    files: commit.files || inputs.files
+                });
                 if (result.committed) {
                     allShas.push(result.sha);
+                    allChangedFiles.push(...result.changedFiles);
                     lastResult = result;
                 }
             }
@@ -464,11 +536,18 @@ const run = async () => {
         else {
             core.info(`Commit message: ${inputs.commitMessage}`);
             core.info(`Files to add: ${inputs.files}`);
-            lastResult = await performCommit(inputs.commitMessage, inputs.commitBody, inputs.files, inputs.signCommit, inputs.skipHooks, inputs.skipIfNoChanges, inputs.dryRun);
+            lastResult = await performCommit({
+                ...baseCommitOpts,
+                message: inputs.commitMessage,
+                body: inputs.commitBody,
+                files: inputs.files
+            });
             if (lastResult.committed) {
                 allShas.push(lastResult.sha);
+                allChangedFiles.push(...lastResult.changedFiles);
             }
         }
+        const uniqueChangedFiles = [...new Set(allChangedFiles)];
         // Dry run: skip push, tag, PR
         if (inputs.dryRun) {
             core.info('[DRY RUN] Skipping push, tag, and PR creation.');
@@ -476,6 +555,7 @@ const run = async () => {
             core.setOutput('commit_sha', '');
             core.setOutput('commit_shas', '[]');
             core.setOutput('commit_url', '');
+            core.setOutput('changed_files', '[]');
             return;
         }
         // Nothing committed: skip push, tag, PR
@@ -485,21 +565,53 @@ const run = async () => {
             core.setOutput('commit_sha', '');
             core.setOutput('commit_shas', '[]');
             core.setOutput('commit_url', '');
+            core.setOutput('changed_files', '[]');
             return;
         }
-        // Push
+        // Push (with optional retry on conflict)
         core.info(`Pushing to branch: ${targetBranch}`);
         const pushArgs = ['push'];
         if (inputs.forcePush) {
             pushArgs.push('-f');
         }
         if (inputs.createBranch) {
-            pushArgs.push('-u', 'origin', `HEAD:refs/heads/${targetBranch}`);
+            // Strip existing refs/heads/ prefix to avoid double-prefixing
+            const cleanBranch = targetBranch.startsWith('refs/heads/')
+                ? targetBranch.replace('refs/heads/', '')
+                : targetBranch;
+            pushArgs.push('-u', 'origin', `HEAD:refs/heads/${cleanBranch}`);
         }
         else {
             pushArgs.push('-u', 'origin', `HEAD:${targetBranch}`);
         }
-        await exec.exec('git', pushArgs);
+        if (inputs.retryOnConflict && !inputs.forcePush) {
+            const maxAttempts = inputs.maxRetries;
+            let pushSuccess = false;
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                const exitCode = await exec.exec('git', pushArgs, {
+                    ignoreReturnCode: true
+                });
+                if (exitCode === 0) {
+                    pushSuccess = true;
+                    break;
+                }
+                if (attempt < maxAttempts) {
+                    core.warning(`Push failed (attempt ${attempt}/${maxAttempts}), pulling with rebase and retrying...`);
+                    await exec.exec('git', [
+                        'pull',
+                        '--rebase',
+                        'origin',
+                        targetBranch
+                    ]);
+                }
+            }
+            if (!pushSuccess) {
+                throw new Error(`Push failed after ${maxAttempts} attempts`);
+            }
+        }
+        else {
+            await exec.exec('git', pushArgs);
+        }
         // Tag
         if (inputs.tag) {
             core.info(`Creating tag: ${inputs.tag}`);
@@ -525,7 +637,9 @@ const run = async () => {
         core.setOutput('commit_sha', lastSha);
         core.setOutput('commit_shas', JSON.stringify(allShas));
         core.setOutput('commit_url', commitUrl);
+        core.setOutput('changed_files', JSON.stringify(uniqueChangedFiles));
         // Create PR if requested
+        let prUrl = '';
         if (inputs.createPr) {
             if (!inputs.token) {
                 throw new Error('token is required when create_pr is enabled');
@@ -540,6 +654,36 @@ const run = async () => {
             core.info(`Pull request created: ${pr.url}`);
             core.setOutput('pr_url', pr.url);
             core.setOutput('pr_number', String(pr.number));
+            prUrl = pr.url;
+        }
+        // Job summary
+        try {
+            core.summary.addHeading('Commit Summary');
+            const rows = [
+                [
+                    { data: 'Field', header: true },
+                    { data: 'Value', header: true }
+                ],
+                ['Branch', targetBranch],
+                ['Commits', String(allShas.length)],
+                ['Last SHA', `\`${lastSha}\``],
+                ['Files Changed', String(uniqueChangedFiles.length)]
+            ];
+            if (commitUrl) {
+                rows.push(['URL', commitUrl]);
+            }
+            if (prUrl) {
+                rows.push(['Pull Request', prUrl]);
+            }
+            core.summary.addTable(rows);
+            if (uniqueChangedFiles.length > 0) {
+                core.summary.addHeading('Changed Files', 3);
+                core.summary.addList(uniqueChangedFiles);
+            }
+            await core.summary.write();
+        }
+        catch {
+            // Summary generation is non-critical
         }
         core.info('Successfully committed and pushed');
     }

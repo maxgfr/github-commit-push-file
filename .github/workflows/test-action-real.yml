@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   # Unit tests
@@ -67,7 +68,7 @@ jobs:
             echo "ERROR: Commit SHA should not be empty"
             exit 1
           fi
-          echo "✅ SUCCESS: Action completed correctly"
+          echo "SUCCESS: Action completed correctly"
 
   # Integration test - Skip when no changes
   test-skip-no-changes:
@@ -91,7 +92,7 @@ jobs:
             echo "ERROR: No commit should have been made"
             exit 1
           fi
-          echo "✅ SUCCESS: Action correctly skipped when no changes"
+          echo "SUCCESS: Action correctly skipped when no changes"
 
   # Integration test - Specific files
   test-specific-files:
@@ -122,7 +123,7 @@ jobs:
             echo "ERROR: Commit should have been made"
             exit 1
           fi
-          echo "✅ SUCCESS: Specific files committed"
+          echo "SUCCESS: Specific files committed"
 
   # Integration test - Custom author
   test-custom-author:
@@ -153,7 +154,7 @@ jobs:
             echo "ERROR: Author should be 'Test Bot <bot@example.com>'"
             exit 1
           fi
-          echo "✅ SUCCESS: Custom author set correctly"
+          echo "SUCCESS: Custom author set correctly"
 
   # Integration test - Working directory
   test-work-dir:
@@ -183,7 +184,7 @@ jobs:
             echo "ERROR: Commit should have been made"
             exit 1
           fi
-          echo "✅ SUCCESS: Working directory feature works"
+          echo "SUCCESS: Working directory feature works"
 
   # Integration test - Files with spaces
   test-files-with-spaces:
@@ -214,7 +215,7 @@ jobs:
             echo "ERROR: Commit should have been made"
             exit 1
           fi
-          echo "✅ SUCCESS: Files with spaces handled correctly"
+          echo "SUCCESS: Files with spaces handled correctly"
 
   # Integration test - Empty commit
   test-empty-commit:
@@ -239,9 +240,8 @@ jobs:
             echo "ERROR: Empty commit should have been made"
             exit 1
           fi
-          # Verify it's actually an empty commit
           if git diff --quiet HEAD~1 HEAD; then
-            echo "✅ SUCCESS: Empty commit created correctly"
+            echo "SUCCESS: Empty commit created correctly"
           else
             echo "ERROR: Commit should have no changes"
             exit 1
@@ -283,7 +283,7 @@ jobs:
           if [ "${{ steps.commit2.outputs.committed }}" != "false" ]; then
             echo "Note: Second commit was skipped (no changes)"
           fi
-          echo "✅ SUCCESS: Multiple commits handled"
+          echo "SUCCESS: Multiple commits handled"
 
   # Integration test - Force push
   test-force-push:
@@ -310,7 +310,7 @@ jobs:
             echo "ERROR: Commit should have been made"
             exit 1
           fi
-          echo "✅ SUCCESS: Force push works"
+          echo "SUCCESS: Force push works"
 
   # Integration test - All files (default)
   test-all-files:
@@ -341,12 +341,11 @@ jobs:
             echo "ERROR: Commit should have been made"
             exit 1
           fi
-          # Check if files exist in the repo
           if [ ! -f test1.txt ] || [ ! -f test2.txt ] || [ ! -f subdir/test3.txt ]; then
             echo "ERROR: Not all files were committed"
             exit 1
           fi
-          echo "✅ SUCCESS: All files committed"
+          echo "SUCCESS: All files committed"
 
   # Integration test - Append on each commit (like sha.txt pattern)
   test-append-commits:
@@ -374,7 +373,7 @@ jobs:
             echo "ERROR: First commit should have been made"
             exit 1
           fi
-          echo "✅ First commit successful"
+          echo "First commit successful"
 
       - name: Second append
         run: echo "GITHUB_SHA=${GITHUB_SHA}" >> sha.txt
@@ -394,7 +393,7 @@ jobs:
             echo "ERROR: Second commit should have been made"
             exit 1
           fi
-          echo "✅ Second commit successful"
+          echo "Second commit successful"
 
       - name: Third append
         run: echo "RUN_ID=${{ github.run_id }}" >> sha.txt
@@ -414,7 +413,7 @@ jobs:
             echo "ERROR: Third commit should have been made"
             exit 1
           fi
-          echo "✅ Third commit successful"
+          echo "Third commit successful"
 
       - name: Verify file has all lines
         run: |
@@ -423,8 +422,566 @@ jobs:
             echo "ERROR: sha.txt should have at least 3 lines"
             exit 1
           fi
-          echo "✅ SUCCESS: All appends committed successfully"
+          echo "SUCCESS: All appends committed successfully"
           cat sha.txt
+
+  # ============================================================
+  # NEW FEATURE INTEGRATION TESTS
+  # ============================================================
+
+  # Integration test - Commit body
+  test-commit-body:
+    name: Test Commit Body
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file
+        run: echo "Body test ${{ github.run_id }}" > body-test.txt
+
+      - name: Commit with body
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: commit with body'
+          commit_body: 'This is the commit body with details.'
+          force_push: 'true'
+          branch: ${{ github.job }}
+
+      - name: Verify commit body
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Commit should have been made"
+            exit 1
+          fi
+          BODY=$(git log -1 --format='%b')
+          echo "Commit body: $BODY"
+          if [[ "$BODY" != *"This is the commit body"* ]]; then
+            echo "ERROR: Commit body not found in git log"
+            exit 1
+          fi
+          echo "SUCCESS: Commit body set correctly"
+
+  # Integration test - New outputs (commit_url, changed_files, commit_shas)
+  test-outputs:
+    name: Test New Outputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test files
+        run: |
+          echo "Output test A ${{ github.run_id }}" > output-a.txt
+          echo "Output test B ${{ github.run_id }}" > output-b.txt
+
+      - name: Commit
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: outputs'
+          files: 'output-a.txt output-b.txt'
+          force_push: 'true'
+          branch: ${{ github.job }}
+
+      - name: Verify outputs
+        run: |
+          echo "commit_url: ${{ steps.commit.outputs.commit_url }}"
+          echo "changed_files: ${{ steps.commit.outputs.changed_files }}"
+          echo "commit_shas: ${{ steps.commit.outputs.commit_shas }}"
+
+          # commit_url should contain /commit/
+          if [[ "${{ steps.commit.outputs.commit_url }}" != *"/commit/"* ]]; then
+            echo "ERROR: commit_url should contain /commit/"
+            exit 1
+          fi
+
+          # changed_files should not be empty
+          CHANGED='${{ steps.commit.outputs.changed_files }}'
+          if [ "$CHANGED" = "[]" ]; then
+            echo "ERROR: changed_files should not be empty"
+            exit 1
+          fi
+
+          # commit_shas should not be empty
+          SHAS='${{ steps.commit.outputs.commit_shas }}'
+          if [ "$SHAS" = "[]" ]; then
+            echo "ERROR: commit_shas should not be empty"
+            exit 1
+          fi
+
+          echo "SUCCESS: All new outputs verified"
+
+  # Integration test - Dry run
+  test-dry-run:
+    name: Test Dry Run
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file
+        run: echo "Dry run test ${{ github.run_id }}" > dry-run-file.txt
+
+      - name: Dry run commit
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: dry run'
+          dry_run: 'true'
+
+      - name: Verify no commit was made
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "false" ]; then
+            echo "ERROR: No commit should have been made in dry run"
+            exit 1
+          fi
+          # The file should still show as untracked/modified
+          if git log -1 --format='%s' | grep -q "dry run"; then
+            echo "ERROR: Dry run should not create a commit"
+            exit 1
+          fi
+          echo "SUCCESS: Dry run works correctly"
+
+  # Integration test - Tags
+  test-tag:
+    name: Test Tagging
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file
+        run: echo "Tag test ${{ github.run_id }}" > tag-test.txt
+
+      - name: Commit with lightweight tag
+        id: commit1
+        uses: ./
+        with:
+          commit_message: 'test: lightweight tag'
+          tag: 'test-light-${{ github.run_id }}'
+          force_push: 'true'
+          branch: ${{ github.job }}
+
+      - name: Verify lightweight tag
+        run: |
+          git fetch --tags origin
+          if ! git tag -l | grep -q "test-light-${{ github.run_id }}"; then
+            echo "ERROR: Lightweight tag should exist"
+            exit 1
+          fi
+          echo "SUCCESS: Lightweight tag created"
+
+      - name: Modify file
+        run: echo "Tag test 2 ${{ github.run_id }}" >> tag-test.txt
+
+      - name: Commit with annotated tag
+        id: commit2
+        uses: ./
+        with:
+          commit_message: 'test: annotated tag'
+          tag: 'test-annotated-${{ github.run_id }}'
+          tag_message: 'Test release ${{ github.run_id }}'
+          force_push: 'true'
+          branch: ${{ github.job }}
+
+      - name: Verify annotated tag
+        run: |
+          git fetch --tags origin
+          if ! git tag -l | grep -q "test-annotated-${{ github.run_id }}"; then
+            echo "ERROR: Annotated tag should exist"
+            exit 1
+          fi
+          TAG_MSG=$(git tag -l -n1 "test-annotated-${{ github.run_id }}")
+          echo "Tag message: $TAG_MSG"
+          if [[ "$TAG_MSG" != *"Test release"* ]]; then
+            echo "ERROR: Annotated tag should have message"
+            exit 1
+          fi
+          echo "SUCCESS: Annotated tag created with message"
+
+  # Integration test - Create branch
+  test-create-branch:
+    name: Test Create Branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file
+        run: echo "Branch test ${{ github.run_id }}" > branch-test.txt
+
+      - name: Commit to new branch
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: create branch'
+          branch: test-new-branch-${{ github.run_id }}
+          create_branch: 'true'
+          force_push: 'true'
+
+      - name: Verify branch exists on remote
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Commit should have been made"
+            exit 1
+          fi
+          git fetch origin
+          if ! git branch -r | grep -q "origin/test-new-branch-${{ github.run_id }}"; then
+            echo "ERROR: Branch should exist on remote"
+            exit 1
+          fi
+          echo "SUCCESS: Branch created on remote"
+
+  # Integration test - Exclude files
+  test-exclude-files:
+    name: Test Exclude Files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test files
+        run: |
+          echo "Include me ${{ github.run_id }}" > include.txt
+          echo "Also include ${{ github.run_id }}" > also-include.txt
+          echo "SECRET=password" > secret.env
+          echo "ANOTHER=key" > another.env
+
+      - name: Commit with exclusions
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: exclude files'
+          exclude_files: '*.env'
+          force_push: 'true'
+          branch: ${{ github.job }}
+
+      - name: Verify excluded files were not committed
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Commit should have been made"
+            exit 1
+          fi
+          COMMITTED_FILES=$(git diff --name-only HEAD~1 HEAD)
+          echo "Committed files: $COMMITTED_FILES"
+          if echo "$COMMITTED_FILES" | grep -q "\.env"; then
+            echo "ERROR: .env files should NOT be committed"
+            exit 1
+          fi
+          if ! echo "$COMMITTED_FILES" | grep -q "include.txt"; then
+            echo "ERROR: include.txt should be committed"
+            exit 1
+          fi
+          echo "SUCCESS: Excluded files correctly"
+
+  # Integration test - Pathspec from file
+  test-pathspec-from-file:
+    name: Test Pathspec From File
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test files and pathspec
+        run: |
+          echo "File A ${{ github.run_id }}" > pathspec-a.txt
+          echo "File B ${{ github.run_id }}" > pathspec-b.txt
+          echo "File C ${{ github.run_id }}" > pathspec-c.txt
+          # Only list A and B in the pathspec file
+          echo "pathspec-a.txt" > pathspec-list.txt
+          echo "pathspec-b.txt" >> pathspec-list.txt
+
+      - name: Commit using pathspec from file
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: pathspec from file'
+          pathspec_from_file: 'pathspec-list.txt'
+          force_push: 'true'
+          branch: ${{ github.job }}
+
+      - name: Verify only listed files were committed
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Commit should have been made"
+            exit 1
+          fi
+          COMMITTED_FILES=$(git diff --name-only HEAD~1 HEAD)
+          echo "Committed files: $COMMITTED_FILES"
+          if ! echo "$COMMITTED_FILES" | grep -q "pathspec-a.txt"; then
+            echo "ERROR: pathspec-a.txt should be committed"
+            exit 1
+          fi
+          if ! echo "$COMMITTED_FILES" | grep -q "pathspec-b.txt"; then
+            echo "ERROR: pathspec-b.txt should be committed"
+            exit 1
+          fi
+          if echo "$COMMITTED_FILES" | grep -q "pathspec-c.txt"; then
+            echo "ERROR: pathspec-c.txt should NOT be committed"
+            exit 1
+          fi
+          echo "SUCCESS: Pathspec from file works correctly"
+
+  # Integration test - Commit timestamp
+  test-commit-timestamp:
+    name: Test Commit Timestamp
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file
+        run: echo "Timestamp test ${{ github.run_id }}" > timestamp-test.txt
+
+      - name: Commit with custom timestamp
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: custom timestamp'
+          commit_timestamp: '2020-06-15T12:00:00Z'
+          force_push: 'true'
+          branch: ${{ github.job }}
+
+      - name: Verify commit timestamp
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Commit should have been made"
+            exit 1
+          fi
+          AUTHOR_DATE=$(git log -1 --format='%ai')
+          echo "Author date: $AUTHOR_DATE"
+          if [[ "$AUTHOR_DATE" != *"2020-06-15"* ]]; then
+            echo "ERROR: Author date should contain 2020-06-15"
+            exit 1
+          fi
+          COMMITTER_DATE=$(git log -1 --format='%ci')
+          echo "Committer date: $COMMITTER_DATE"
+          if [[ "$COMMITTER_DATE" != *"2020-06-15"* ]]; then
+            echo "ERROR: Committer date should contain 2020-06-15"
+            exit 1
+          fi
+          echo "SUCCESS: Commit timestamp set correctly"
+
+  # Integration test - Amend
+  test-amend:
+    name: Test Amend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create initial file
+        run: echo "Initial content ${{ github.run_id }}" > amend-test.txt
+
+      - name: First commit
+        id: commit1
+        uses: ./
+        with:
+          commit_message: 'test: initial commit for amend'
+          force_push: 'true'
+          branch: ${{ github.job }}
+
+      - name: Save commit count
+        run: |
+          echo "BEFORE_COUNT=$(git rev-list --count HEAD)" >> $GITHUB_ENV
+
+      - name: Modify file
+        run: echo "Amended content ${{ github.run_id }}" >> amend-test.txt
+
+      - name: Amend commit
+        id: commit2
+        uses: ./
+        with:
+          commit_message: 'test: amended commit'
+          amend: 'true'
+          force_push: 'true'
+          branch: ${{ github.job }}
+
+      - name: Verify amend
+        run: |
+          if [ "${{ steps.commit2.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Amend should have been made"
+            exit 1
+          fi
+          # SHA should be different from first commit
+          if [ "${{ steps.commit1.outputs.commit_sha }}" = "${{ steps.commit2.outputs.commit_sha }}" ]; then
+            echo "ERROR: Amend should produce a different SHA"
+            exit 1
+          fi
+          # Commit count should be the same (amend replaces, doesn't add)
+          AFTER_COUNT=$(git rev-list --count HEAD)
+          echo "Before: $BEFORE_COUNT, After: $AFTER_COUNT"
+          if [ "$AFTER_COUNT" != "$BEFORE_COUNT" ]; then
+            echo "ERROR: Amend should not increase commit count"
+            exit 1
+          fi
+          # Message should be the amended one
+          MSG=$(git log -1 --format='%s')
+          if [ "$MSG" != "test: amended commit" ]; then
+            echo "ERROR: Commit message should be the amended one"
+            exit 1
+          fi
+          echo "SUCCESS: Amend works correctly"
+
+  # Integration test - Multi-commit JSON
+  test-multi-commit-json:
+    name: Test Multi-Commit JSON
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create files for multi-commit
+        run: |
+          echo "File A ${{ github.run_id }}" > multi-a.txt
+          echo "File B ${{ github.run_id }}" > multi-b.txt
+
+      - name: Multi-commit
+        id: commit
+        uses: ./
+        with:
+          commits: |
+            [
+              {"message": "test: add file A", "files": "multi-a.txt"},
+              {"message": "test: add file B", "files": "multi-b.txt"}
+            ]
+          force_push: 'true'
+          branch: ${{ github.job }}
+
+      - name: Verify multi-commit
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Commits should have been made"
+            exit 1
+          fi
+
+          # commit_shas should have 2 entries
+          SHAS='${{ steps.commit.outputs.commit_shas }}'
+          echo "commit_shas: $SHAS"
+          COUNT=$(echo "$SHAS" | jq length)
+          if [ "$COUNT" != "2" ]; then
+            echo "ERROR: Expected 2 commit SHAs, got $COUNT"
+            exit 1
+          fi
+
+          # Verify both commits in log
+          if ! git log --oneline -5 | grep -q "test: add file A"; then
+            echo "ERROR: First commit message not found"
+            exit 1
+          fi
+          if ! git log --oneline -5 | grep -q "test: add file B"; then
+            echo "ERROR: Second commit message not found"
+            exit 1
+          fi
+
+          echo "SUCCESS: Multi-commit JSON works correctly"
+
+  # Integration test - Create PR
+  test-create-pr:
+    name: Test Create PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file
+        run: echo "PR test ${{ github.run_id }}" > pr-test-file.txt
+
+      - name: Commit, push, and create PR
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: PR creation test'
+          branch: test-pr-${{ github.run_id }}
+          create_branch: 'true'
+          create_pr: 'true'
+          pr_title: 'Test PR from run ${{ github.run_id }}'
+          pr_base_branch: 'main'
+          pr_body: 'Automated test PR - safe to close'
+          token: ${{ github.token }}
+          force_push: 'true'
+
+      - name: Verify PR was created
+        run: |
+          echo "PR URL: ${{ steps.commit.outputs.pr_url }}"
+          echo "PR Number: ${{ steps.commit.outputs.pr_number }}"
+          if [ -z "${{ steps.commit.outputs.pr_url }}" ]; then
+            echo "ERROR: PR URL should not be empty"
+            exit 1
+          fi
+          if [ -z "${{ steps.commit.outputs.pr_number }}" ]; then
+            echo "ERROR: PR number should not be empty"
+            exit 1
+          fi
+          echo "SUCCESS: PR created"
+
+      - name: Cleanup - Close PR and delete branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "${{ steps.commit.outputs.pr_number }}" ]; then
+            gh pr close ${{ steps.commit.outputs.pr_number }} --delete-branch || true
+            echo "Cleaned up PR #${{ steps.commit.outputs.pr_number }}"
+          fi
+
+  # Integration test - Token authentication
+  test-token-auth:
+    name: Test Token Auth
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file
+        run: echo "Token auth test ${{ github.run_id }}" > token-test.txt
+
+      - name: Commit with token auth
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: token auth'
+          token: ${{ github.token }}
+          force_push: 'true'
+          branch: ${{ github.job }}
+
+      - name: Verify commit was made
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Commit should have been made with token auth"
+            exit 1
+          fi
+          echo "SUCCESS: Token authentication works"
+
+  # Integration test - Skip hooks (verify commit succeeds with skip_hooks=false)
+  test-skip-hooks-false:
+    name: Test Skip Hooks False
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file
+        run: echo "Hooks test ${{ github.run_id }}" > hooks-test.txt
+
+      - name: Commit without --no-verify
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'test: no --no-verify'
+          skip_hooks: 'false'
+          force_push: 'true'
+          branch: ${{ github.job }}
+
+      - name: Verify commit was made
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Commit should have been made"
+            exit 1
+          fi
+          echo "SUCCESS: Commit without --no-verify works"
 
   # Summary
   test-summary:
@@ -443,7 +1000,20 @@ jobs:
         test-multiple-commits,
         test-force-push,
         test-all-files,
-        test-append-commits
+        test-append-commits,
+        test-commit-body,
+        test-outputs,
+        test-dry-run,
+        test-tag,
+        test-create-branch,
+        test-exclude-files,
+        test-pathspec-from-file,
+        test-commit-timestamp,
+        test-amend,
+        test-multi-commit-json,
+        test-create-pr,
+        test-token-auth,
+        test-skip-hooks-false
       ]
     if: always()
     steps:
@@ -465,22 +1035,56 @@ jobs:
           echo "| Force Push | ${{ needs.test-force-push.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| All Files | ${{ needs.test-all-files.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Append On Each Commit | ${{ needs.test-append-commits.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit Body | ${{ needs.test-commit-body.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| New Outputs | ${{ needs.test-outputs.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dry Run | ${{ needs.test-dry-run.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tagging | ${{ needs.test-tag.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Create Branch | ${{ needs.test-create-branch.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Exclude Files | ${{ needs.test-exclude-files.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Pathspec From File | ${{ needs.test-pathspec-from-file.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit Timestamp | ${{ needs.test-commit-timestamp.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Amend | ${{ needs.test-amend.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Multi-Commit JSON | ${{ needs.test-multi-commit-json.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Create PR | ${{ needs.test-create-pr.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Token Auth | ${{ needs.test-token-auth.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Skip Hooks False | ${{ needs.test-skip-hooks-false.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
 
       - name: Check overall status
         run: |
-          if [ "${{ needs.unit-tests.result }}" != "success" ] || \
-             [ "${{ needs.test-basic.result }}" != "success" ] || \
-             [ "${{ needs.test-skip-no-changes.result }}" != "success" ] || \
-             [ "${{ needs.test-specific-files.result }}" != "success" ] || \
-             [ "${{ needs.test-custom-author.result }}" != "success" ] || \
-             [ "${{ needs.test-work-dir.result }}" != "success" ] || \
-             [ "${{ needs.test-files-with-spaces.result }}" != "success" ] || \
-             [ "${{ needs.test-empty-commit.result }}" != "success" ] || \
-             [ "${{ needs.test-multiple-commits.result }}" != "success" ] || \
-             [ "${{ needs.test-force-push.result }}" != "success" ] || \
-             [ "${{ needs.test-all-files.result }}" != "success" ] || \
-             [ "${{ needs.test-append-commits.result }}" != "success" ]; then
-            echo "❌ Some tests failed!"
+          FAILED=0
+          for JOB in \
+            "${{ needs.unit-tests.result }}" \
+            "${{ needs.test-basic.result }}" \
+            "${{ needs.test-skip-no-changes.result }}" \
+            "${{ needs.test-specific-files.result }}" \
+            "${{ needs.test-custom-author.result }}" \
+            "${{ needs.test-work-dir.result }}" \
+            "${{ needs.test-files-with-spaces.result }}" \
+            "${{ needs.test-empty-commit.result }}" \
+            "${{ needs.test-multiple-commits.result }}" \
+            "${{ needs.test-force-push.result }}" \
+            "${{ needs.test-all-files.result }}" \
+            "${{ needs.test-append-commits.result }}" \
+            "${{ needs.test-commit-body.result }}" \
+            "${{ needs.test-outputs.result }}" \
+            "${{ needs.test-dry-run.result }}" \
+            "${{ needs.test-tag.result }}" \
+            "${{ needs.test-create-branch.result }}" \
+            "${{ needs.test-exclude-files.result }}" \
+            "${{ needs.test-pathspec-from-file.result }}" \
+            "${{ needs.test-commit-timestamp.result }}" \
+            "${{ needs.test-amend.result }}" \
+            "${{ needs.test-multi-commit-json.result }}" \
+            "${{ needs.test-create-pr.result }}" \
+            "${{ needs.test-token-auth.result }}" \
+            "${{ needs.test-skip-hooks-false.result }}"
+          do
+            if [ "$JOB" != "success" ]; then
+              FAILED=1
+            fi
+          done
+          if [ "$FAILED" = "1" ]; then
+            echo "Some tests failed!"
             exit 1
           fi
-          echo "✅ All tests passed!"
+          echo "All tests passed!"

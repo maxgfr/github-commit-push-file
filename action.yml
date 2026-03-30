@@ -122,6 +122,36 @@ inputs:
     description: 'JSON array of commits to make [{message, body?, files?}]. Overrides commit_message/files if provided.'
     default: ''
 
+  amend:
+    required: false
+    description: Amend the last commit instead of creating a new one (cannot be used with commits array)
+    default: 'false'
+
+  retry_on_conflict:
+    required: false
+    description: Retry push with pull --rebase if it fails due to remote changes (only when force_push is false)
+    default: 'false'
+
+  max_retries:
+    required: false
+    description: Maximum number of push retry attempts when retry_on_conflict is enabled
+    default: '3'
+
+  exclude_files:
+    required: false
+    description: Files/patterns to exclude from staging (space-separated, supports quoted paths). Applied after git add.
+    default: ''
+
+  pathspec_from_file:
+    required: false
+    description: Path to a file containing the list of files to add (one per line). Takes precedence over files input.
+    default: ''
+
+  commit_timestamp:
+    required: false
+    description: Override commit date (sets GIT_AUTHOR_DATE and GIT_COMMITTER_DATE). Accepts any git-compatible date format.
+    default: ''
+
   commit_name:
     required: false
     description: '[DEPRECATED] Use commit_message instead'
@@ -136,6 +166,8 @@ outputs:
     description: JSON array of all commit SHAs
   commit_url:
     description: The GitHub URL of the last commit
+  changed_files:
+    description: JSON array of files changed across all commits
   pr_url:
     description: The URL of the created pull request (if create_pr was used)
   pr_number:
