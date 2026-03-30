@@ -40,7 +40,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.createPullRequest = exports.performCommit = exports.resolveBranch = exports.isValidBase64 = exports.parseFileList = exports.hasChanges = exports.setupGpg = exports.getInputs = exports.run = void 0;
+exports.buildTemplateVars = exports.expandTemplateVars = exports.createPullRequest = exports.performCommit = exports.resolveBranch = exports.isValidBase64 = exports.parseFileList = exports.hasChanges = exports.setupGpg = exports.getInputs = exports.run = void 0;
 const core = __importStar(__nccwpck_require__(6966));
 const exec = __importStar(__nccwpck_require__(2851));
 const fs = __importStar(__nccwpck_require__(9896));
@@ -120,6 +120,35 @@ const parseFileList = (files) => {
     return fileList;
 };
 exports.parseFileList = parseFileList;
+/**
+ * Expands template variables in a string.
+ * Supported: {{date}}, {{datetime}}, {{sha}}, {{sha:short}},
+ * {{branch}}, {{run_id}}, {{run_number}}, {{actor}}, {{repository}}
+ */
+const expandTemplateVars = (template, vars) => {
+    if (!template.includes('{{'))
+        return template;
+    return template.replace(/\{\{(\w+(?::\w+)?)\}\}/g, (_match, key) => vars[key] ?? _match);
+};
+exports.expandTemplateVars = expandTemplateVars;
+/**
+ * Builds the template variables map from the current environment.
+ */
+const buildTemplateVars = (targetBranch, headSha) => {
+    const now = new Date();
+    return {
+        date: now.toISOString().split('T')[0],
+        datetime: now.toISOString(),
+        sha: headSha,
+        'sha:short': headSha.substring(0, 7),
+        branch: targetBranch,
+        run_id: process.env.GITHUB_RUN_ID || '',
+        run_number: process.env.GITHUB_RUN_NUMBER || '',
+        actor: process.env.GITHUB_ACTOR || '',
+        repository: process.env.GITHUB_REPOSITORY || ''
+    };
+};
+exports.buildTemplateVars = buildTemplateVars;
 const getInputs = () => {
     let commitMessage = core.getInput('commit_message');
     if (!commitMessage) {
@@ -164,6 +193,13 @@ const getInputs = () => {
         throw new Error('amend cannot be used with the commits array');
     }
     const maxRetriesInput = parseInt(core.getInput('max_retries') || '3', 10);
+    const prLabelsRaw = core.getInput('pr_labels');
+    const prLabels = prLabelsRaw
+        ? prLabelsRaw
+            .split(',')
+            .map(l => l.trim())
+            .filter(l => l.length > 0)
+        : [];
     const authorName = core.getInput('author_name') || process.env.GITHUB_ACTOR || 'github-actions';
     const authorEmail = core.getInput('author_email') ||
         `${process.env.GITHUB_ACTOR || 'github-actions'}@users.noreply.github.com`;
@@ -189,6 +225,8 @@ const getInputs = () => {
         prTitle: core.getInput('pr_title'),
         prBaseBranch: core.getInput('pr_base_branch'),
         prBody: core.getInput('pr_body'),
+        prLabels,
+        prDraft: core.getInput('pr_draft') === 'true',
         token: core.getInput('token'),
         commits,
         amend,
@@ -387,16 +425,19 @@ const performCommit = async (options) => {
     if (!changes && !amend) {
         commitArgs.push('--allow-empty');
     }
-    // Set commit timestamp if provided
+    // Set commit timestamp if provided, with try/finally for cleanup
     if (commitTimestamp) {
         process.env.GIT_AUTHOR_DATE = commitTimestamp;
         process.env.GIT_COMMITTER_DATE = commitTimestamp;
     }
-    await exec.exec('git', commitArgs);
-    // Clean up timestamp env vars
-    if (commitTimestamp) {
-        delete process.env.GIT_AUTHOR_DATE;
-        delete process.env.GIT_COMMITTER_DATE;
+    try {
+        await exec.exec('git', commitArgs);
+    }
+    finally {
+        if (commitTimestamp) {
+            delete process.env.GIT_AUTHOR_DATE;
+            delete process.env.GIT_COMMITTER_DATE;
+        }
     }
     let commitSha = '';
     await exec.exec('git', ['rev-parse', 'HEAD'], {
@@ -413,7 +454,7 @@ const performCommit = async (options) => {
     return { committed: true, sha: commitSha, changedFiles };
 };
 exports.performCommit = performCommit;
-const createPullRequest = async (token, title, body, head, base) => {
+const createPullRequest = async (token, title, body, head, base, draft, labels) => {
     const repository = process.env.GITHUB_REPOSITORY || '';
     const apiUrl = process.env.GITHUB_API_URL || 'https://api.github.com';
     let prBase = base;
@@ -431,6 +472,15 @@ const createPullRequest = async (token, title, body, head, base) => {
         const repoData = (await repoResponse.json());
         prBase = repoData.default_branch;
     }
+    const prPayload = {
+        title,
+        head,
+        base: prBase,
+        body: body || ''
+    };
+    if (draft) {
+        prPayload.draft = true;
+    }
     const response = await fetch(`${apiUrl}/repos/${repository}/pulls`, {
         method: 'POST',
         headers: {
@@ -439,18 +489,29 @@ const createPullRequest = async (token, title, body, head, base) => {
             Accept: 'application/vnd.github.v3+json',
             'User-Agent': 'github-commit-push-file'
         },
-        body: JSON.stringify({
-            title,
-            head,
-            base: prBase,
-            body: body || ''
-        })
+        body: JSON.stringify(prPayload)
     });
     if (!response.ok) {
         const errorData = await response.text();
         throw new Error(`Failed to create PR: ${errorData}`);
     }
     const prData = (await response.json());
+    // Add labels if provided (PRs use the Issues API for labels)
+    if (labels.length > 0) {
+        const labelResponse = await fetch(`${apiUrl}/repos/${repository}/issues/${prData.number}/labels`, {
+            method: 'POST',
+            headers: {
+                Authorization: `token ${token}`,
+                'Content-Type': 'application/json',
+                Accept: 'application/vnd.github.v3+json',
+                'User-Agent': 'github-commit-push-file'
+            },
+            body: JSON.stringify({ labels })
+        });
+        if (!labelResponse.ok) {
+            core.warning(`Failed to add labels to PR #${prData.number}: ${labelResponse.statusText}`);
+        }
+    }
     return { url: prData.html_url, number: prData.number };
 };
 exports.createPullRequest = createPullRequest;
@@ -500,6 +561,17 @@ const run = async () => {
             core.info('GPG signing enabled');
         }
         const targetBranch = resolveBranch(inputs.branch);
+        // Get current HEAD SHA for template variables
+        let currentHeadSha = '';
+        await exec.exec('git', ['rev-parse', 'HEAD'], {
+            listeners: {
+                stdout: (data) => {
+                    currentHeadSha += data.toString();
+                }
+            }
+        });
+        currentHeadSha = currentHeadSha.trim();
+        const templateVars = buildTemplateVars(targetBranch, currentHeadSha);
         // Build commit options shared across single/multi mode
         const baseCommitOpts = {
             signCommit: inputs.signCommit,
@@ -522,8 +594,8 @@ const run = async () => {
                 core.info(`Commit ${i + 1}/${inputs.commits.length}: ${commit.message}`);
                 const result = await performCommit({
                     ...baseCommitOpts,
-                    message: commit.message,
-                    body: commit.body || '',
+                    message: expandTemplateVars(commit.message, templateVars),
+                    body: expandTemplateVars(commit.body || '', templateVars),
                     files: commit.files || inputs.files
                 });
                 if (result.committed) {
@@ -538,8 +610,8 @@ const run = async () => {
             core.info(`Files to add: ${inputs.files}`);
             lastResult = await performCommit({
                 ...baseCommitOpts,
-                message: inputs.commitMessage,
-                body: inputs.commitBody,
+                message: expandTemplateVars(inputs.commitMessage, templateVars),
+                body: expandTemplateVars(inputs.commitBody, templateVars),
                 files: inputs.files
             });
             if (lastResult.committed) {
@@ -597,12 +669,13 @@ const run = async () => {
                 }
                 if (attempt < maxAttempts) {
                     core.warning(`Push failed (attempt ${attempt}/${maxAttempts}), pulling with rebase and retrying...`);
-                    await exec.exec('git', [
-                        'pull',
-                        '--rebase',
-                        'origin',
-                        targetBranch
-                    ]);
+                    const rebaseExit = await exec.exec('git', ['pull', '--rebase', 'origin', targetBranch], { ignoreReturnCode: true });
+                    if (rebaseExit !== 0) {
+                        await exec.exec('git', ['rebase', '--abort'], {
+                            ignoreReturnCode: true
+                        });
+                        throw new Error('Push failed: rebase conflict encountered during retry. Manual intervention required.');
+                    }
                 }
             }
             if (!pushSuccess) {
@@ -644,13 +717,13 @@ const run = async () => {
             if (!inputs.token) {
                 throw new Error('token is required when create_pr is enabled');
             }
-            const prTitle = inputs.prTitle ||
+            const prTitle = expandTemplateVars(inputs.prTitle ||
                 inputs.commitMessage ||
                 inputs.commits[0]?.message ||
-                'Automated changes';
-            const prBody = inputs.prBody || inputs.commitBody || '';
+                'Automated changes', templateVars);
+            const prBody = expandTemplateVars(inputs.prBody || inputs.commitBody || '', templateVars);
             core.info('Creating pull request...');
-            const pr = await createPullRequest(inputs.token, prTitle, prBody, targetBranch, inputs.prBaseBranch);
+            const pr = await createPullRequest(inputs.token, prTitle, prBody, targetBranch, inputs.prBaseBranch, inputs.prDraft, inputs.prLabels);
             core.info(`Pull request created: ${pr.url}`);
             core.setOutput('pr_url', pr.url);
             core.setOutput('pr_number', String(pr.number));

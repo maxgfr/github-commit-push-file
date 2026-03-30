@@ -29,7 +29,9 @@ import {
   parseFileList,
   isValidBase64,
   resolveBranch,
-  getInputs
+  getInputs,
+  expandTemplateVars,
+  buildTemplateVars
 } from '../main'
 
 const mockGetInput = core.getInput as jest.Mock
@@ -1156,11 +1158,13 @@ describe('run', () => {
       )
       expect(commitCalls).toHaveLength(2)
 
+      // sha1 is consumed by the initial rev-parse for template vars
+      // so commit rev-parses get sha2 and sha3
       expect(mockSetOutput).toHaveBeenCalledWith(
         'commit_shas',
-        JSON.stringify(['sha1', 'sha2'])
+        JSON.stringify(['sha2', 'sha3'])
       )
-      expect(mockSetOutput).toHaveBeenCalledWith('commit_sha', 'sha2')
+      expect(mockSetOutput).toHaveBeenCalledWith('commit_sha', 'sha3')
     })
 
     test('only pushes once for multiple commits', async () => {
@@ -1642,5 +1646,492 @@ describe('run', () => {
         expect.stringContaining('Failed to get commit SHA')
       )
     })
+
+    test('cleans up timestamp env vars even if commit fails', async () => {
+      mockInputs({
+        ...defaultInputs,
+        commit_timestamp: '2024-01-01T00:00:00Z'
+      })
+      mockExecFn.mockImplementation(
+        async (cmd: string, args?: string[]): Promise<number> => {
+          if (
+            cmd === 'git' &&
+            args?.[0] === 'diff' &&
+            args?.[2] === '--quiet'
+          ) {
+            return 1
+          }
+          if (cmd === 'git' && args?.[0] === 'commit') {
+            throw new Error('commit failed')
+          }
+          return 0
+        }
+      )
+      await run()
+
+      // Even though commit threw, env vars should be cleaned up
+      expect(process.env.GIT_AUTHOR_DATE).toBeUndefined()
+      expect(process.env.GIT_COMMITTER_DATE).toBeUndefined()
+      expect(mockSetFailed).toHaveBeenCalled()
+    })
+  })
+
+  // ---------- Template variables ----------
+
+  describe('template variables', () => {
+    test('expands {{date}} in commit message', async () => {
+      mockInputs({
+        ...defaultInputs,
+        commit_message: 'build: deploy on {{date}}'
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      await run()
+
+      const commitCall = mockExecFn.mock.calls.find(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'commit'
+      )
+      const msgIndex = (commitCall![1] as string[]).indexOf('-m') + 1
+      const message = commitCall![1][msgIndex] as string
+      // Should contain a date like 2026-03-31, not {{date}}
+      expect(message).not.toContain('{{date}}')
+      expect(message).toMatch(/build: deploy on \d{4}-\d{2}-\d{2}/)
+    })
+
+    test('expands {{sha:short}} in commit message', async () => {
+      mockInputs({
+        ...defaultInputs,
+        commit_message: 'build: from {{sha:short}}'
+      })
+      // mockExecDefault returns 'abc123def456' for all rev-parse calls
+      // The initial rev-parse (for template vars) gets this SHA
+      mockExecDefault({hasChanges: true, commitSha: 'abc123def456'})
+      await run()
+
+      const commitCall = mockExecFn.mock.calls.find(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'commit'
+      )
+      const msgIndex = (commitCall![1] as string[]).indexOf('-m') + 1
+      const message = commitCall![1][msgIndex] as string
+      expect(message).not.toContain('{{sha:short}}')
+      // sha:short is first 7 chars of the initial HEAD SHA
+      expect(message).toBe('build: from abc123d')
+    })
+
+    test('expands {{branch}} in commit message', async () => {
+      process.env.GITHUB_REF = 'refs/heads/develop'
+      mockInputs({
+        ...defaultInputs,
+        commit_message: 'deploy to {{branch}}'
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      await run()
+
+      const commitCall = mockExecFn.mock.calls.find(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'commit'
+      )
+      const msgIndex = (commitCall![1] as string[]).indexOf('-m') + 1
+      expect(commitCall![1][msgIndex]).toBe('deploy to develop')
+    })
+
+    test('expands {{actor}} and {{repository}} from env', async () => {
+      process.env.GITHUB_ACTOR = 'bot-user'
+      process.env.GITHUB_REPOSITORY = 'org/repo'
+      mockInputs({
+        ...defaultInputs,
+        commit_message: '{{actor}} pushed to {{repository}}'
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      await run()
+
+      const commitCall = mockExecFn.mock.calls.find(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'commit'
+      )
+      const msgIndex = (commitCall![1] as string[]).indexOf('-m') + 1
+      expect(commitCall![1][msgIndex]).toBe('bot-user pushed to org/repo')
+    })
+
+    test('expands template vars in commit body', async () => {
+      process.env.GITHUB_RUN_ID = '12345'
+      mockInputs({
+        ...defaultInputs,
+        commit_body: 'Run: {{run_id}}'
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      await run()
+
+      const commitCall = mockExecFn.mock.calls.find(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'commit'
+      )
+      const msgIndex = (commitCall![1] as string[]).indexOf('-m') + 1
+      const message = commitCall![1][msgIndex] as string
+      expect(message).toContain('Run: 12345')
+    })
+
+    test('preserves unknown template vars', async () => {
+      mockInputs({
+        ...defaultInputs,
+        commit_message: 'keep {{unknown_var}} as-is'
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      await run()
+
+      const commitCall = mockExecFn.mock.calls.find(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'commit'
+      )
+      const msgIndex = (commitCall![1] as string[]).indexOf('-m') + 1
+      expect(commitCall![1][msgIndex]).toBe('keep {{unknown_var}} as-is')
+    })
+
+    test('works with messages without template vars', async () => {
+      mockInputs({
+        ...defaultInputs,
+        commit_message: 'plain message'
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      await run()
+
+      const commitCall = mockExecFn.mock.calls.find(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'commit'
+      )
+      const msgIndex = (commitCall![1] as string[]).indexOf('-m') + 1
+      expect(commitCall![1][msgIndex]).toBe('plain message')
+    })
+
+    test('expands template vars in multi-commit messages', async () => {
+      process.env.GITHUB_REF = 'refs/heads/main'
+      mockInputs({
+        ...defaultInputs,
+        commits: JSON.stringify([
+          {message: 'deploy {{branch}} part 1'},
+          {message: 'deploy {{branch}} part 2'}
+        ])
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      await run()
+
+      const commitCalls = mockExecFn.mock.calls.filter(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'commit'
+      )
+      const msg1Idx = (commitCalls[0][1] as string[]).indexOf('-m') + 1
+      const msg2Idx = (commitCalls[1][1] as string[]).indexOf('-m') + 1
+      expect(commitCalls[0][1][msg1Idx]).toBe('deploy main part 1')
+      expect(commitCalls[1][1][msg2Idx]).toBe('deploy main part 2')
+    })
+  })
+
+  // ---------- PR labels and draft ----------
+
+  describe('PR labels and draft', () => {
+    test('creates draft PR when pr_draft=true', async () => {
+      process.env.GITHUB_REPOSITORY = 'owner/repo'
+      process.env.GITHUB_API_URL = 'https://api.github.com'
+      mockInputs({
+        ...defaultInputs,
+        create_pr: 'true',
+        token: 'ghp_test',
+        pr_base_branch: 'main',
+        pr_draft: 'true',
+        branch: 'feature'
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      ;(global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          html_url: 'https://github.com/owner/repo/pull/1',
+          number: 1
+        })
+      })
+      await run()
+
+      const fetchCall = (global.fetch as jest.Mock).mock.calls.find(
+        (c: any[]) => typeof c[0] === 'string' && c[0].includes('/pulls')
+      )
+      const body = JSON.parse(fetchCall[1].body as string)
+      expect(body.draft).toBe(true)
+    })
+
+    test('does not set draft field when pr_draft=false', async () => {
+      process.env.GITHUB_REPOSITORY = 'owner/repo'
+      process.env.GITHUB_API_URL = 'https://api.github.com'
+      mockInputs({
+        ...defaultInputs,
+        create_pr: 'true',
+        token: 'ghp_test',
+        pr_base_branch: 'main',
+        branch: 'feature'
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      ;(global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          html_url: 'https://github.com/owner/repo/pull/1',
+          number: 1
+        })
+      })
+      await run()
+
+      const fetchCall = (global.fetch as jest.Mock).mock.calls.find(
+        (c: any[]) => typeof c[0] === 'string' && c[0].includes('/pulls')
+      )
+      const body = JSON.parse(fetchCall[1].body as string)
+      expect(body.draft).toBeUndefined()
+    })
+
+    test('adds labels to PR after creation', async () => {
+      process.env.GITHUB_REPOSITORY = 'owner/repo'
+      process.env.GITHUB_API_URL = 'https://api.github.com'
+      mockInputs({
+        ...defaultInputs,
+        create_pr: 'true',
+        token: 'ghp_test',
+        pr_base_branch: 'main',
+        pr_labels: 'bug, enhancement, automated',
+        branch: 'feature'
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      ;(global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            html_url: 'https://github.com/owner/repo/pull/5',
+            number: 5
+          })
+        })
+        .mockResolvedValueOnce({ok: true, json: async () => []})
+      await run()
+
+      // Second fetch call should be to add labels
+      const labelCall = (global.fetch as jest.Mock).mock.calls.find(
+        (c: any[]) =>
+          typeof c[0] === 'string' && c[0].includes('/issues/5/labels')
+      )
+      expect(labelCall).toBeDefined()
+      const body = JSON.parse(labelCall[1].body as string)
+      expect(body.labels).toEqual(['bug', 'enhancement', 'automated'])
+    })
+
+    test('warns but does not fail if label addition fails', async () => {
+      process.env.GITHUB_REPOSITORY = 'owner/repo'
+      process.env.GITHUB_API_URL = 'https://api.github.com'
+      mockInputs({
+        ...defaultInputs,
+        create_pr: 'true',
+        token: 'ghp_test',
+        pr_base_branch: 'main',
+        pr_labels: 'nonexistent-label',
+        branch: 'feature'
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      ;(global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            html_url: 'https://github.com/owner/repo/pull/1',
+            number: 1
+          })
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          statusText: 'Not Found'
+        })
+      await run()
+
+      // Should warn but not fail
+      expect(mockSetFailed).not.toHaveBeenCalled()
+      expect(mockSetOutput).toHaveBeenCalledWith('committed', 'true')
+    })
+
+    test('does not call labels API when pr_labels is empty', async () => {
+      process.env.GITHUB_REPOSITORY = 'owner/repo'
+      process.env.GITHUB_API_URL = 'https://api.github.com'
+      mockInputs({
+        ...defaultInputs,
+        create_pr: 'true',
+        token: 'ghp_test',
+        pr_base_branch: 'main',
+        branch: 'feature'
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      ;(global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          html_url: 'https://github.com/owner/repo/pull/1',
+          number: 1
+        })
+      })
+      await run()
+
+      // Only one fetch call (PR creation), no labels call
+      expect(global.fetch).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  // ---------- Rebase conflict handling ----------
+
+  describe('rebase conflict handling', () => {
+    test('aborts rebase and fails on conflict during retry', async () => {
+      mockInputs({
+        ...defaultInputs,
+        force_push: 'false',
+        retry_on_conflict: 'true',
+        max_retries: '3'
+      })
+
+      mockExecFn.mockImplementation(
+        async (cmd: string, args?: string[], opts?: any): Promise<number> => {
+          if (
+            cmd === 'git' &&
+            args?.[0] === 'diff' &&
+            args?.[2] === '--quiet'
+          ) {
+            return 1
+          }
+          if (cmd === 'git' && args?.[0] === 'rev-parse') {
+            opts?.listeners?.stdout?.(Buffer.from('sha1\n'))
+            return 0
+          }
+          if (cmd === 'git' && args?.[0] === 'push') {
+            return 1 // Push always fails
+          }
+          if (cmd === 'git' && args?.[0] === 'pull') {
+            return 1 // Rebase conflict
+          }
+          return 0
+        }
+      )
+      await run()
+
+      // Should have called rebase --abort
+      const abortCall = mockExecFn.mock.calls.find(
+        (c: any[]) =>
+          c[0] === 'git' && c[1]?.[0] === 'rebase' && c[1]?.[1] === '--abort'
+      )
+      expect(abortCall).toBeDefined()
+
+      expect(mockSetFailed).toHaveBeenCalledWith(
+        expect.stringContaining('rebase conflict')
+      )
+    })
+  })
+})
+
+// ==================== Unit tests: expandTemplateVars ====================
+
+describe('expandTemplateVars', () => {
+  test('expands known variables', () => {
+    const vars = {date: '2024-01-01', branch: 'main', sha: 'abc123'}
+    expect(expandTemplateVars('deploy {{branch}} on {{date}}', vars)).toBe(
+      'deploy main on 2024-01-01'
+    )
+  })
+
+  test('preserves unknown variables', () => {
+    expect(expandTemplateVars('{{unknown}}', {})).toBe('{{unknown}}')
+  })
+
+  test('handles colon-separated keys', () => {
+    const vars = {'sha:short': 'abc1234'}
+    expect(expandTemplateVars('sha: {{sha:short}}', vars)).toBe('sha: abc1234')
+  })
+
+  test('handles multiple occurrences', () => {
+    const vars = {branch: 'main'}
+    expect(expandTemplateVars('{{branch}} and {{branch}}', vars)).toBe(
+      'main and main'
+    )
+  })
+
+  test('returns string as-is when no template vars present', () => {
+    expect(expandTemplateVars('no vars here', {})).toBe('no vars here')
+  })
+
+  test('handles empty string', () => {
+    expect(expandTemplateVars('', {})).toBe('')
+  })
+})
+
+// ==================== Unit tests: buildTemplateVars ====================
+
+describe('buildTemplateVars', () => {
+  test('returns all expected keys', () => {
+    const vars = buildTemplateVars('main', 'abc123def456')
+    expect(vars).toHaveProperty('date')
+    expect(vars).toHaveProperty('datetime')
+    expect(vars).toHaveProperty('sha', 'abc123def456')
+    expect(vars).toHaveProperty('sha:short', 'abc123d')
+    expect(vars).toHaveProperty('branch', 'main')
+    expect(vars).toHaveProperty('run_id')
+    expect(vars).toHaveProperty('run_number')
+    expect(vars).toHaveProperty('actor')
+    expect(vars).toHaveProperty('repository')
+  })
+
+  test('date is in YYYY-MM-DD format', () => {
+    const vars = buildTemplateVars('main', 'sha')
+    expect(vars.date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
+  test('datetime is ISO format', () => {
+    const vars = buildTemplateVars('main', 'sha')
+    expect(vars.datetime).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+  })
+
+  test('reads env vars', () => {
+    process.env.GITHUB_RUN_ID = '999'
+    process.env.GITHUB_RUN_NUMBER = '42'
+    process.env.GITHUB_ACTOR = 'testbot'
+    process.env.GITHUB_REPOSITORY = 'org/repo'
+    const vars = buildTemplateVars('main', 'sha')
+    expect(vars.run_id).toBe('999')
+    expect(vars.run_number).toBe('42')
+    expect(vars.actor).toBe('testbot')
+    expect(vars.repository).toBe('org/repo')
+  })
+})
+
+// ==================== Unit tests: getInputs - new fields ====================
+
+describe('getInputs - PR options', () => {
+  const mockInputsFn = (inputs: Record<string, string>): void => {
+    mockGetInput.mockImplementation((name: string) => inputs[name] || '')
+  }
+
+  test('parses pr_labels as comma-separated list', () => {
+    mockInputsFn({
+      commit_message: 'test',
+      pr_labels: 'bug, enhancement, automated'
+    })
+    const inputs = getInputs()
+    expect(inputs.prLabels).toEqual(['bug', 'enhancement', 'automated'])
+  })
+
+  test('handles empty pr_labels', () => {
+    mockInputsFn({commit_message: 'test'})
+    expect(getInputs().prLabels).toEqual([])
+  })
+
+  test('handles single pr_label', () => {
+    mockInputsFn({commit_message: 'test', pr_labels: 'bug'})
+    expect(getInputs().prLabels).toEqual(['bug'])
+  })
+
+  test('strips whitespace from pr_labels', () => {
+    mockInputsFn({commit_message: 'test', pr_labels: ' bug , fix '})
+    expect(getInputs().prLabels).toEqual(['bug', 'fix'])
+  })
+
+  test('filters empty labels from trailing comma', () => {
+    mockInputsFn({commit_message: 'test', pr_labels: 'bug,,fix,'})
+    expect(getInputs().prLabels).toEqual(['bug', 'fix'])
+  })
+
+  test('parses pr_draft', () => {
+    mockInputsFn({commit_message: 'test', pr_draft: 'true'})
+    expect(getInputs().prDraft).toBe(true)
+  })
+
+  test('pr_draft defaults to false', () => {
+    mockInputsFn({commit_message: 'test'})
+    expect(getInputs().prDraft).toBe(false)
   })
 })

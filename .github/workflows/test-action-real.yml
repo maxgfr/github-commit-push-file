@@ -983,6 +983,52 @@ jobs:
           fi
           echo "SUCCESS: Commit without --no-verify works"
 
+  # Integration test - Template variables in commit message
+  test-template-vars:
+    name: Test Template Variables
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file
+        run: echo "Template test ${{ github.run_id }}" > template-test.txt
+
+      - name: Commit with template vars
+        id: commit
+        uses: ./
+        with:
+          commit_message: 'build: deploy {{sha:short}} to {{branch}} on {{date}}'
+          commit_body: 'Actor: {{actor}}, Run: {{run_id}}'
+          force_push: 'true'
+          branch: ${{ github.job }}
+
+      - name: Verify template vars are expanded
+        run: |
+          if [ "${{ steps.commit.outputs.committed }}" != "true" ]; then
+            echo "ERROR: Commit should have been made"
+            exit 1
+          fi
+          MSG=$(git log -1 --format='%s')
+          echo "Commit message: $MSG"
+          # Should not contain {{ (all vars should be expanded)
+          if echo "$MSG" | grep -q '{{'; then
+            echo "ERROR: Template variables were not expanded"
+            exit 1
+          fi
+          # Should contain a date pattern
+          if ! echo "$MSG" | grep -qE '[0-9]{4}-[0-9]{2}-[0-9]{2}'; then
+            echo "ERROR: {{date}} was not expanded correctly"
+            exit 1
+          fi
+          BODY=$(git log -1 --format='%b')
+          echo "Commit body: $BODY"
+          if echo "$BODY" | grep -q '{{'; then
+            echo "ERROR: Template variables in body were not expanded"
+            exit 1
+          fi
+          echo "SUCCESS: Template variables expanded correctly"
+
   # Summary
   test-summary:
     name: Test Summary
@@ -1013,7 +1059,8 @@ jobs:
         test-multi-commit-json,
         test-create-pr,
         test-token-auth,
-        test-skip-hooks-false
+        test-skip-hooks-false,
+        test-template-vars
       ]
     if: always()
     steps:
@@ -1048,6 +1095,7 @@ jobs:
           echo "| Create PR | ${{ needs.test-create-pr.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Token Auth | ${{ needs.test-token-auth.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Skip Hooks False | ${{ needs.test-skip-hooks-false.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Template Variables | ${{ needs.test-template-vars.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
 
       - name: Check overall status
         run: |
@@ -1077,7 +1125,8 @@ jobs:
             "${{ needs.test-multi-commit-json.result }}" \
             "${{ needs.test-create-pr.result }}" \
             "${{ needs.test-token-auth.result }}" \
-            "${{ needs.test-skip-hooks-false.result }}"
+            "${{ needs.test-skip-hooks-false.result }}" \
+            "${{ needs.test-template-vars.result }}"
           do
             if [ "$JOB" != "success" ]; then
               FAILED=1

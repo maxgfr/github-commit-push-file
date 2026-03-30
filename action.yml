@@ -11,11 +11,14 @@ runs:
 inputs:
   commit_message:
     required: false
-    description: The commit message (required unless commits is provided)
+    description: >
+      The commit message (required unless commits is provided).
+      Supports template variables: {{date}}, {{datetime}}, {{sha}}, {{sha:short}},
+      {{branch}}, {{run_id}}, {{run_number}}, {{actor}}, {{repository}}.
 
   commit_body:
     required: false
-    description: Optional commit body (appended after commit message with a blank line)
+    description: Optional commit body (appended after commit message with a blank line). Supports template variables.
     default: ''
 
   files:
@@ -99,7 +102,7 @@ inputs:
 
   pr_title:
     required: false
-    description: Title for the pull request (defaults to commit message)
+    description: Title for the pull request (defaults to commit message). Supports template variables.
     default: ''
 
   pr_base_branch:
@@ -109,8 +112,18 @@ inputs:
 
   pr_body:
     required: false
-    description: Body for the pull request
+    description: Body for the pull request. Supports template variables.
     default: ''
+
+  pr_labels:
+    required: false
+    description: Comma-separated list of labels to add to the pull request
+    default: ''
+
+  pr_draft:
+    required: false
+    description: Whether to create the pull request as a draft
+    default: 'false'
 
   token:
     required: false
@@ -119,7 +132,7 @@ inputs:
 
   commits:
     required: false
-    description: 'JSON array of commits to make [{message, body?, files?}]. Overrides commit_message/files if provided.'
+    description: 'JSON array of commits to make [{message, body?, files?}]. Overrides commit_message/files if provided. Supports template variables.'
     default: ''
 
   amend:

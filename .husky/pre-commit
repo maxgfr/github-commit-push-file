@@ -1,6 +1,3 @@
-#!/bin/sh
-. "$(dirname "$0")/_/husky.sh"
-
+pnpm run lint-staged
 pnpm run all
 git add dist/
-pnpm run lint-staged
