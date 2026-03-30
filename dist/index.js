@@ -40,30 +40,28 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.createPullRequest = exports.performCommit = exports.resolveBranch = exports.isValidBase64 = exports.parseFileList = exports.hasChanges = exports.setupGpg = exports.getInputs = exports.run = void 0;
 const core = __importStar(__nccwpck_require__(6966));
 const exec = __importStar(__nccwpck_require__(2851));
 const fs = __importStar(__nccwpck_require__(9896));
 const os = __importStar(__nccwpck_require__(857));
 const path = __importStar(__nccwpck_require__(6928));
 /**
- * Validates if a string is valid base64 encoded content
- * @param str - String to validate
- * @returns true if valid base64, false otherwise
+ * Validates if a string is valid base64 encoded content.
+ * Strips whitespace before validation to support keys with line breaks.
  */
 const isValidBase64 = (str) => {
     if (!str || str.length === 0)
         return false;
     try {
-        return Buffer.from(str, 'base64').toString('base64') === str;
+        const cleaned = str.replace(/\s/g, '');
+        return Buffer.from(cleaned, 'base64').toString('base64') === cleaned;
     }
     catch {
         return false;
     }
 };
-/**
- * Safely removes a file if it exists
- * @param filePath - Path to the file to remove
- */
+exports.isValidBase64 = isValidBase64;
 const safeUnlinkSync = (filePath) => {
     try {
         if (fs.existsSync(filePath)) {
@@ -74,10 +72,6 @@ const safeUnlinkSync = (filePath) => {
         // Ignore errors during cleanup
     }
 };
-/**
- * Safely removes a directory if it exists and is empty
- * @param dirPath - Path to the directory to remove
- */
 const safeRmdirSync = (dirPath) => {
     try {
         if (fs.existsSync(dirPath)) {
@@ -85,26 +79,48 @@ const safeRmdirSync = (dirPath) => {
         }
     }
     catch {
-        // Ignore errors during cleanup (directory may not be empty)
+        // Ignore errors during cleanup
     }
 };
-/**
- * Safely creates a directory with proper permissions if it doesn't exist
- * @param dirPath - Path to the directory to create
- * @param mode - File permissions mode
- */
 const safeMkdirSync = (dirPath, mode) => {
     if (!fs.existsSync(dirPath)) {
         fs.mkdirSync(dirPath, { mode, recursive: true });
     }
 };
 /**
- * Gets and validates action inputs from environment
- * @returns ActionInputs object containing all configuration
- * @throws Error if required inputs are missing
+ * Parses a space-separated file list with proper quote handling.
+ * Tracks which character opened a quote so that e.g. an apostrophe
+ * inside double quotes does not close the group.
  */
+const parseFileList = (files) => {
+    const fileList = [];
+    let current = '';
+    let quoteChar = null;
+    for (let i = 0; i < files.length; i++) {
+        const char = files[i];
+        if ((char === '"' || char === "'") && quoteChar === null) {
+            quoteChar = char;
+        }
+        else if (char === quoteChar) {
+            quoteChar = null;
+        }
+        else if (char === ' ' && quoteChar === null) {
+            if (current.length > 0) {
+                fileList.push(current);
+                current = '';
+            }
+        }
+        else {
+            current += char;
+        }
+    }
+    if (current.length > 0) {
+        fileList.push(current);
+    }
+    return fileList;
+};
+exports.parseFileList = parseFileList;
 const getInputs = () => {
-    // Support both new 'commit_message' and deprecated 'commit_name'
     let commitMessage = core.getInput('commit_message');
     if (!commitMessage) {
         commitMessage = core.getInput('commit_name');
@@ -112,16 +128,42 @@ const getInputs = () => {
             core.warning('The "commit_name" input is deprecated. Please use "commit_message" instead.');
         }
     }
-    if (!commitMessage) {
-        throw new Error('commit_message is required. Please provide a commit message.');
+    const commitsJson = core.getInput('commits');
+    let commits = [];
+    if (commitsJson) {
+        try {
+            const parsed = JSON.parse(commitsJson);
+            if (!Array.isArray(parsed)) {
+                throw new Error('commits must be a JSON array');
+            }
+            commits = parsed;
+            for (const c of commits) {
+                if (!c.message) {
+                    throw new Error('Each commit in the commits array must have a "message" field');
+                }
+            }
+        }
+        catch (e) {
+            if (e instanceof SyntaxError) {
+                throw new Error(`Invalid JSON in commits input: ${e.message}`);
+            }
+            throw e;
+        }
     }
-    // Trim commit message to avoid issues with trailing whitespace
-    commitMessage = commitMessage.trim();
-    const authorName = core.getInput('author_name') || process.env.GITHUB_ACTOR || 'github-actions';
+    if (!commitMessage && commits.length === 0) {
+        throw new Error('commit_message is required (or provide a commits JSON array).');
+    }
+    if (commitMessage) {
+        commitMessage = commitMessage.trim();
+    }
+    const authorName = core.getInput('author_name') ||
+        process.env.GITHUB_ACTOR ||
+        'github-actions';
     const authorEmail = core.getInput('author_email') ||
         `${process.env.GITHUB_ACTOR || 'github-actions'}@users.noreply.github.com`;
     return {
         commitMessage,
+        commitBody: core.getInput('commit_body'),
         files: core.getInput('files') || '-A',
         branch: core.getInput('branch'),
         authorName,
@@ -129,70 +171,66 @@ const getInputs = () => {
         signCommit: core.getInput('sign_commit') === 'true',
         gpgPrivateKey: core.getInput('gpg_private_key'),
         gpgPassphrase: core.getInput('gpg_passphrase'),
-        forcePush: core.getInput('force_push') !== 'false',
+        forcePush: core.getInput('force_push') === 'true',
         skipIfNoChanges: core.getInput('skip_if_no_changes') === 'true',
-        workDir: core.getInput('work_dir') || undefined
+        skipHooks: core.getInput('skip_hooks') !== 'false',
+        workDir: core.getInput('work_dir') || undefined,
+        dryRun: core.getInput('dry_run') === 'true',
+        tag: core.getInput('tag'),
+        tagMessage: core.getInput('tag_message'),
+        createBranch: core.getInput('create_branch') === 'true',
+        createPr: core.getInput('create_pr') === 'true',
+        prTitle: core.getInput('pr_title'),
+        prBaseBranch: core.getInput('pr_base_branch'),
+        prBody: core.getInput('pr_body'),
+        token: core.getInput('token'),
+        commits
     };
 };
-/**
- * Sets up GPG signing for git commits
- * @param gpgPrivateKey - Base64 encoded GPG private key
- * @param gpgPassphrase - Optional passphrase for the GPG key
- * @returns The GPG key ID
- * @throws Error if GPG setup fails
- */
+exports.getInputs = getInputs;
 const setupGpg = async (gpgPrivateKey, gpgPassphrase) => {
     core.info('Setting up GPG for commit signing...');
-    // Validate base64 encoding
-    if (!isValidBase64(gpgPrivateKey)) {
+    const cleanedKey = gpgPrivateKey.replace(/\s/g, '');
+    if (!isValidBase64(cleanedKey)) {
         throw new Error('GPG private key must be valid base64 encoded string');
     }
-    // Decode base64 GPG key
     let gpgKey;
     try {
-        gpgKey = Buffer.from(gpgPrivateKey, 'base64').toString('utf-8');
+        gpgKey = Buffer.from(cleanedKey, 'base64').toString('utf-8');
     }
     catch (error) {
         throw new Error(`Failed to decode GPG key: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
-    // Validate decoded key is not empty
     if (!gpgKey.trim().startsWith('-----BEGIN PGP')) {
         throw new Error('Decoded GPG key does not appear to be a valid PGP key');
     }
-    // Create a temporary file for the GPG key
     let tmpDir = null;
     let keyFile = null;
     try {
         tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gpg-'));
         keyFile = path.join(tmpDir, 'private.key');
         fs.writeFileSync(keyFile, gpgKey, { mode: 0o600 });
-        // Import the GPG key
         const importArgs = ['--batch', '--yes', '--import', keyFile];
         if (gpgPassphrase) {
             importArgs.splice(2, 0, '--pinentry-mode', 'loopback', '--passphrase', gpgPassphrase);
         }
         await exec.exec('gpg', importArgs);
-        // Get the key ID
-        let keyId = '';
+        let gpgOutput = '';
         await exec.exec('gpg', ['--list-secret-keys', '--keyid-format', 'long', '--with-colons'], {
             listeners: {
                 stdout: (data) => {
-                    const output = data.toString();
-                    const match = output.match(/sec:[^:]*:[^:]*:[^:]*:([A-F0-9]+):/i);
-                    if (match) {
-                        keyId = match[1];
-                    }
+                    gpgOutput += data.toString();
                 }
             }
         });
+        const match = gpgOutput.match(/sec:[^:]*:[^:]*:[^:]*:([A-F0-9]+):/i);
+        const keyId = match ? match[1] : '';
         if (!keyId) {
             throw new Error('Failed to extract GPG key ID from imported key');
         }
         core.info(`GPG key imported with ID: ${keyId}`);
-        // Configure git to use GPG
-        await exec.exec('git', ['config', '--global', 'user.signingkey', keyId]);
-        await exec.exec('git', ['config', '--global', 'commit.gpgsign', 'true']);
-        // Configure GPG to use loopback pinentry for passphrase
+        await exec.exec('git', ['config', '--local', 'user.signingkey', keyId]);
+        await exec.exec('git', ['config', '--local', 'commit.gpgsign', 'true']);
         if (gpgPassphrase) {
             const gpgConfDir = path.join(os.homedir(), '.gnupg');
             safeMkdirSync(gpgConfDir, 0o700);
@@ -204,7 +242,6 @@ const setupGpg = async (gpgPrivateKey, gpgPassphrase) => {
             fs.writeFileSync(gpgConfPath, 'use-agent\npinentry-mode loopback\n', {
                 mode: 0o600
             });
-            // Restart gpg-agent
             try {
                 await exec.exec('gpgconf', ['--kill', 'gpg-agent']);
             }
@@ -215,7 +252,6 @@ const setupGpg = async (gpgPrivateKey, gpgPassphrase) => {
         return keyId;
     }
     finally {
-        // Clean up the temporary key file and directory
         if (keyFile) {
             safeUnlinkSync(keyFile);
         }
@@ -224,63 +260,150 @@ const setupGpg = async (gpgPrivateKey, gpgPassphrase) => {
         }
     }
 };
-/**
- * Adds files to git staging area and checks for changes
- * @param files - Files pattern ('-A' for all files, or space-separated list)
- * @returns true if there are staged changes, false otherwise
- */
+exports.setupGpg = setupGpg;
 const hasChanges = async (files) => {
-    // Add files first to check for changes
     if (files === '-A') {
         await exec.exec('git', ['add', '-A']);
     }
     else {
-        // Split by whitespace, but handle quoted paths
-        const fileList = [];
-        let current = '';
-        let inQuotes = false;
-        for (let i = 0; i < files.length; i++) {
-            const char = files[i];
-            if (char === '"' || char === "'") {
-                inQuotes = !inQuotes;
-            }
-            else if (char === ' ' && !inQuotes) {
-                if (current.length > 0) {
-                    fileList.push(current);
-                    current = '';
-                }
-            }
-            else {
-                current += char;
-            }
-        }
-        if (current.length > 0) {
-            fileList.push(current);
-        }
-        // Add each file individually
+        const fileList = parseFileList(files);
         for (const file of fileList) {
             if (file.length > 0) {
                 await exec.exec('git', ['add', file]);
             }
         }
     }
-    // Check if there are staged changes
     const exitCode = await exec.exec('git', ['diff', '--cached', '--quiet'], {
         ignoreReturnCode: true
     });
     return exitCode !== 0;
 };
+exports.hasChanges = hasChanges;
 /**
- * Main execution function for the GitHub Action
- * Commits and pushes files to the repository
+ * Resolves the target branch from inputs and environment variables.
+ * Properly handles both refs/heads/ and refs/tags/ prefixes.
  */
+const resolveBranch = (inputBranch) => {
+    if (inputBranch)
+        return inputBranch;
+    if (process.env.GITHUB_HEAD_REF) {
+        return process.env.GITHUB_HEAD_REF;
+    }
+    const githubRef = process.env.GITHUB_REF || '';
+    if (githubRef.startsWith('refs/heads/')) {
+        return githubRef.replace('refs/heads/', '');
+    }
+    if (githubRef.startsWith('refs/tags/')) {
+        return githubRef.replace('refs/tags/', '');
+    }
+    return 'main';
+};
+exports.resolveBranch = resolveBranch;
+const performCommit = async (message, body, files, signCommit, skipHooks, skipIfNoChanges, dryRun) => {
+    const changes = await hasChanges(files);
+    if (!changes) {
+        if (skipIfNoChanges) {
+            core.info('No changes detected. Skipping commit.');
+            return { committed: false, sha: '' };
+        }
+        else {
+            core.warning('No changes detected, but proceeding anyway.');
+        }
+    }
+    if (dryRun) {
+        let stagedFiles = '';
+        await exec.exec('git', ['diff', '--cached', '--name-status'], {
+            listeners: {
+                stdout: (data) => {
+                    stagedFiles += data.toString();
+                }
+            }
+        });
+        core.info(`[DRY RUN] Would commit with message: "${message}"`);
+        if (stagedFiles) {
+            core.info(`[DRY RUN] Staged files:\n${stagedFiles.trim()}`);
+        }
+        else {
+            core.info('[DRY RUN] No files staged (would be an empty commit)');
+        }
+        await exec.exec('git', ['reset'], { ignoreReturnCode: true });
+        return { committed: false, sha: '' };
+    }
+    let fullMessage = message;
+    if (body) {
+        fullMessage += '\n\n' + body;
+    }
+    const commitArgs = ['commit', '-m', fullMessage];
+    if (skipHooks) {
+        commitArgs.push('--no-verify');
+    }
+    if (signCommit) {
+        commitArgs.push('-S');
+    }
+    if (!changes) {
+        commitArgs.push('--allow-empty');
+    }
+    await exec.exec('git', commitArgs);
+    let commitSha = '';
+    await exec.exec('git', ['rev-parse', 'HEAD'], {
+        listeners: {
+            stdout: (data) => {
+                commitSha += data.toString();
+            }
+        }
+    });
+    commitSha = commitSha.trim();
+    if (!commitSha) {
+        throw new Error('Failed to get commit SHA after commit');
+    }
+    return { committed: true, sha: commitSha };
+};
+exports.performCommit = performCommit;
+const createPullRequest = async (token, title, body, head, base) => {
+    const repository = process.env.GITHUB_REPOSITORY || '';
+    const apiUrl = process.env.GITHUB_API_URL || 'https://api.github.com';
+    let prBase = base;
+    if (!prBase) {
+        const repoResponse = await fetch(`${apiUrl}/repos/${repository}`, {
+            headers: {
+                Authorization: `token ${token}`,
+                Accept: 'application/vnd.github.v3+json',
+                'User-Agent': 'github-commit-push-file'
+            }
+        });
+        if (!repoResponse.ok) {
+            throw new Error(`Failed to get repository info: ${repoResponse.statusText}`);
+        }
+        const repoData = (await repoResponse.json());
+        prBase = repoData.default_branch;
+    }
+    const response = await fetch(`${apiUrl}/repos/${repository}/pulls`, {
+        method: 'POST',
+        headers: {
+            Authorization: `token ${token}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/vnd.github.v3+json',
+            'User-Agent': 'github-commit-push-file'
+        },
+        body: JSON.stringify({
+            title,
+            head,
+            base: prBase,
+            body: body || ''
+        })
+    });
+    if (!response.ok) {
+        const errorData = await response.text();
+        throw new Error(`Failed to create PR: ${errorData}`);
+    }
+    const prData = (await response.json());
+    return { url: prData.html_url, number: prData.number };
+};
+exports.createPullRequest = createPullRequest;
 const run = async () => {
     try {
         const inputs = getInputs();
-        core.info(`Commit message: ${inputs.commitMessage}`);
-        core.info(`Files to add: ${inputs.files}`);
         core.info(`Author: ${inputs.authorName} <${inputs.authorEmail}>`);
-        // Change to working directory if specified
         if (inputs.workDir) {
             core.info(`Changing working directory to: ${inputs.workDir}`);
             if (!fs.existsSync(inputs.workDir)) {
@@ -288,19 +411,32 @@ const run = async () => {
             }
             process.chdir(inputs.workDir);
         }
-        // Configure git user
+        // Configure git user with --local to avoid polluting shared runners
         await exec.exec('git', [
             'config',
-            '--global',
+            '--local',
             'user.name',
             inputs.authorName
         ]);
         await exec.exec('git', [
             'config',
-            '--global',
+            '--local',
             'user.email',
             inputs.authorEmail
         ]);
+        // Configure token-based authentication if provided
+        if (inputs.token) {
+            core.setSecret(inputs.token);
+            const repository = process.env.GITHUB_REPOSITORY || '';
+            const serverUrl = process.env.GITHUB_SERVER_URL || 'https://github.com';
+            const host = new URL(serverUrl).host;
+            await exec.exec('git', [
+                'remote',
+                'set-url',
+                'origin',
+                `https://x-access-token:${inputs.token}@${host}/${repository}.git`
+            ], { silent: true });
+        }
         // Setup GPG signing if enabled
         if (inputs.signCommit) {
             if (!inputs.gpgPrivateKey) {
@@ -309,77 +445,114 @@ const run = async () => {
             await setupGpg(inputs.gpgPrivateKey, inputs.gpgPassphrase);
             core.info('GPG signing enabled');
         }
-        // Check for changes if skip_if_no_changes is enabled
-        const changes = await hasChanges(inputs.files);
-        if (!changes) {
-            if (inputs.skipIfNoChanges) {
-                core.info('No changes detected. Skipping commit and push.');
-                core.setOutput('committed', 'false');
-                core.setOutput('commit_sha', '');
-                return;
-            }
-            else {
-                core.warning('No changes detected, but proceeding anyway.');
-            }
-        }
-        // Build commit command
-        const commitArgs = ['commit', '-m', inputs.commitMessage, '--no-verify'];
-        if (inputs.signCommit) {
-            commitArgs.push('-S');
-        }
-        // If there are no changes and the user explicitly set skip_if_no_changes=false,
-        // allow an empty commit so the workflow can still produce a commit event.
-        if (!changes) {
-            commitArgs.push('--allow-empty');
-        }
-        await exec.exec('git', commitArgs);
-        // Get the commit SHA
-        let commitSha = '';
-        await exec.exec('git', ['rev-parse', 'HEAD'], {
-            listeners: {
-                stdout: (data) => {
-                    commitSha = data.toString().trim();
+        const targetBranch = resolveBranch(inputs.branch);
+        // Perform commits
+        let lastResult = { committed: false, sha: '' };
+        const allShas = [];
+        if (inputs.commits.length > 0) {
+            core.info(`Processing ${inputs.commits.length} commits...`);
+            for (let i = 0; i < inputs.commits.length; i++) {
+                const commit = inputs.commits[i];
+                core.info(`Commit ${i + 1}/${inputs.commits.length}: ${commit.message}`);
+                const result = await performCommit(commit.message, commit.body || '', commit.files || inputs.files, inputs.signCommit, inputs.skipHooks, inputs.skipIfNoChanges, inputs.dryRun);
+                if (result.committed) {
+                    allShas.push(result.sha);
+                    lastResult = result;
                 }
             }
-        });
-        if (!commitSha) {
-            throw new Error('Failed to get commit SHA after commit');
         }
-        // Determine target branch
-        let targetBranch = inputs.branch;
-        if (!targetBranch) {
-            // GITHUB_HEAD_REF is set for pull request events
-            // GITHUB_REF is set for all events and includes refs/heads/ for branch events
-            targetBranch =
-                process.env.GITHUB_HEAD_REF ||
-                    process.env.GITHUB_REF?.replace('refs/heads/', '') ||
-                    process.env.GITHUB_REF?.replace('refs/tags/', '') ||
-                    'main';
+        else {
+            core.info(`Commit message: ${inputs.commitMessage}`);
+            core.info(`Files to add: ${inputs.files}`);
+            lastResult = await performCommit(inputs.commitMessage, inputs.commitBody, inputs.files, inputs.signCommit, inputs.skipHooks, inputs.skipIfNoChanges, inputs.dryRun);
+            if (lastResult.committed) {
+                allShas.push(lastResult.sha);
+            }
         }
+        // Dry run: skip push, tag, PR
+        if (inputs.dryRun) {
+            core.info('[DRY RUN] Skipping push, tag, and PR creation.');
+            core.setOutput('committed', 'false');
+            core.setOutput('commit_sha', '');
+            core.setOutput('commit_shas', '[]');
+            core.setOutput('commit_url', '');
+            return;
+        }
+        // Nothing committed: skip push, tag, PR
+        if (allShas.length === 0) {
+            core.info('No commits were made.');
+            core.setOutput('committed', 'false');
+            core.setOutput('commit_sha', '');
+            core.setOutput('commit_shas', '[]');
+            core.setOutput('commit_url', '');
+            return;
+        }
+        // Push
         core.info(`Pushing to branch: ${targetBranch}`);
-        // Build push command
         const pushArgs = ['push'];
         if (inputs.forcePush) {
             pushArgs.push('-f');
         }
-        pushArgs.push('-u', 'origin', `HEAD:${targetBranch}`);
+        if (inputs.createBranch) {
+            pushArgs.push('-u', 'origin', `HEAD:refs/heads/${targetBranch}`);
+        }
+        else {
+            pushArgs.push('-u', 'origin', `HEAD:${targetBranch}`);
+        }
         await exec.exec('git', pushArgs);
-        core.info('File has been successfully committed and pushed');
+        // Tag
+        if (inputs.tag) {
+            core.info(`Creating tag: ${inputs.tag}`);
+            const tagArgs = ['tag'];
+            if (inputs.tagMessage) {
+                tagArgs.push('-a', inputs.tag, '-m', inputs.tagMessage);
+            }
+            else {
+                tagArgs.push(inputs.tag);
+            }
+            await exec.exec('git', tagArgs);
+            await exec.exec('git', ['push', 'origin', inputs.tag]);
+            core.info(`Tag ${inputs.tag} pushed`);
+        }
+        // Set outputs
+        const lastSha = allShas[allShas.length - 1];
+        const serverUrl = process.env.GITHUB_SERVER_URL || 'https://github.com';
+        const repository = process.env.GITHUB_REPOSITORY || '';
+        const commitUrl = repository
+            ? `${serverUrl}/${repository}/commit/${lastSha}`
+            : '';
         core.setOutput('committed', 'true');
-        core.setOutput('commit_sha', commitSha);
+        core.setOutput('commit_sha', lastSha);
+        core.setOutput('commit_shas', JSON.stringify(allShas));
+        core.setOutput('commit_url', commitUrl);
+        // Create PR if requested
+        if (inputs.createPr) {
+            if (!inputs.token) {
+                throw new Error('token is required when create_pr is enabled');
+            }
+            const prTitle = inputs.prTitle ||
+                inputs.commitMessage ||
+                inputs.commits[0]?.message ||
+                'Automated changes';
+            const prBody = inputs.prBody || inputs.commitBody || '';
+            core.info('Creating pull request...');
+            const pr = await createPullRequest(inputs.token, prTitle, prBody, targetBranch, inputs.prBaseBranch);
+            core.info(`Pull request created: ${pr.url}`);
+            core.setOutput('pr_url', pr.url);
+            core.setOutput('pr_number', String(pr.number));
+        }
+        core.info('Successfully committed and pushed');
     }
     catch (e) {
         const error = e;
         core.setFailed(error.message);
-        throw error; // Re-throw to ensure process exits with error
     }
 };
-// Execute the action with top-level error handling
-run().catch((error) => {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    core.setFailed(`Action failed: ${errorMessage}`);
-    process.exit(1);
-});
+exports.run = run;
+// Auto-execute when not running in Jest
+if (!process.env.JEST_WORKER_ID) {
+    void run();
+}
 //# sourceMappingURL=main.js.map
 
 /***/ }),

@@ -10,12 +10,17 @@ runs:
 
 inputs:
   commit_message:
-    required: true
-    description: The commit message
+    required: false
+    description: The commit message (required unless commits is provided)
+
+  commit_body:
+    required: false
+    description: Optional commit body (appended after commit message with a blank line)
+    default: ''
 
   files:
     required: false
-    description: Files to add (space-separated). Defaults to all files (-A)
+    description: Files to add (space-separated, supports quoted paths and glob patterns). Defaults to all files (-A)
     default: '-A'
 
   branch:
@@ -58,9 +63,64 @@ inputs:
     description: Skip commit and push if there are no changes
     default: 'true'
 
+  skip_hooks:
+    required: false
+    description: Whether to skip git hooks (--no-verify) on commit
+    default: 'true'
+
   work_dir:
     required: false
     description: Working directory to execute git commands in. Defaults to the repository root
+
+  dry_run:
+    required: false
+    description: Show what would be committed without actually committing or pushing
+    default: 'false'
+
+  tag:
+    required: false
+    description: Optional tag to create on the commit
+    default: ''
+
+  tag_message:
+    required: false
+    description: Message for annotated tag (if empty, creates a lightweight tag)
+    default: ''
+
+  create_branch:
+    required: false
+    description: Create the target branch if it does not exist on the remote
+    default: 'false'
+
+  create_pr:
+    required: false
+    description: Whether to create a pull request after pushing (requires token)
+    default: 'false'
+
+  pr_title:
+    required: false
+    description: Title for the pull request (defaults to commit message)
+    default: ''
+
+  pr_base_branch:
+    required: false
+    description: Base branch for the pull request (defaults to the repository default branch)
+    default: ''
+
+  pr_body:
+    required: false
+    description: Body for the pull request
+    default: ''
+
+  token:
+    required: false
+    description: GitHub token for authentication (used for push auth and PR creation)
+    default: ''
+
+  commits:
+    required: false
+    description: 'JSON array of commits to make [{message, body?, files?}]. Overrides commit_message/files if provided.'
+    default: ''
 
   commit_name:
     required: false
@@ -71,4 +131,12 @@ outputs:
   committed:
     description: Whether a commit was made (true/false)
   commit_sha:
-    description: The SHA of the commit (if committed)
+    description: The SHA of the last commit (if committed)
+  commit_shas:
+    description: JSON array of all commit SHAs
+  commit_url:
+    description: The GitHub URL of the last commit
+  pr_url:
+    description: The URL of the created pull request (if create_pr was used)
+  pr_number:
+    description: The number of the created pull request (if create_pr was used)
