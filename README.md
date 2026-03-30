@@ -1,25 +1,35 @@
 # github-commit-push-file [![View Action](https://img.shields.io/badge/view-github%20action-yellow.svg)](https://github.com/marketplace/actions/github-commit-push-file) [![pipeline](https://img.shields.io/github/actions/workflow/status/maxgfr/github-commit-push-file/test-build.yml)](https://github.com/maxgfr/github-commit-push-file/actions/workflows/test-build.yml)
 
-`maxgfr/github-commit-push-file` is a [GitHub Action](https://github.com/features/actions) which lets you commit and push files to a repository with advanced options like commit signing, custom author, and selective file staging.
+`maxgfr/github-commit-push-file` is a [GitHub Action](https://github.com/features/actions) which lets you commit and push files to a repository with advanced options like commit signing, custom author, selective file staging, PR creation, and more.
 
 ## Features
 
-- ✅ Commit and push files to a repository
-- ✅ GPG commit signing support with enhanced validation
-- ✅ Custom author name and email
-- ✅ Selective file staging (specific files or all, with quote support for filenames with spaces)
-- ✅ Target branch configuration
-- ✅ Skip if no changes option
-- ✅ Force push option
-- ✅ Outputs for commit status and SHA
-- ✅ Working directory support for monorepos
+- Commit and push files to a repository
+- GPG commit signing support with enhanced validation
+- Custom author name and email
+- Selective file staging (specific files, glob patterns, quoted paths with spaces)
+- Exclude files from staging (e.g. `*.env`)
+- Read file list from a file (`pathspec_from_file`)
+- Target branch configuration with automatic branch creation
+- Skip if no changes / allow empty commits
+- Force push and push retry on conflict with automatic rebase
+- Amend previous commit
+- Create tags (lightweight and annotated)
+- Create pull requests with labels and draft support
+- Template variables in commit messages (`{{date}}`, `{{sha}}`, `{{branch}}`, etc.)
+- Custom commit timestamp
+- Dry run mode
+- Multi-commit support (JSON array)
+- Token-based authentication for cross-repo push
+- Job summary with commit details
+- Rich outputs: commit SHA, URL, changed files list
 
 ## Usage
 
 ### Basic Usage
 
 ```yaml
-name: 'commit-and-push'
+name: commit-and-push
 on:
   push:
     branches: [main]
@@ -39,202 +49,306 @@ jobs:
           commit_message: 'chore: add hello.txt'
 ```
 
-### With Change Detection (Skip if No Changes)
+### Skip If No Changes
 
-This is useful for scheduled workflows where you only want to commit if there are actual changes:
-
-````yaml
-name: 'scheduled-update'
-on:
-  schedule:
-    - cron: '0 0 * * *'
-
-jobs:
-  update:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run update script
-        run: node ./scripts/update-data.js
-
-      - name: Commit and push (if changes)
-        uses: maxgfr/github-commit-push-file@main
-        with:
-          commit_message: 'chore: update data'
-          files: 'data/output.json'
-          skip_if_no_changes: 'true'
-        ```
-
-        Note: If no changes are detected, the action will skip the commit and push and set the `committed` output to `false`.
-
-### With Working Directory
-
-This is useful for monorepos or when you want to commit files in a specific subdirectory:
+Useful for scheduled workflows where you only want to commit if there are actual changes:
 
 ```yaml
-name: 'commit-in-subdirectory'
-on:
-  push:
-    branches: [main]
-
-jobs:
-  action:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create a file in subdirectory
-        run: echo "Content" >> packages/my-package/file.txt
-
-      - name: Commit and push in subdirectory
-        uses: maxgfr/github-commit-push-file@main
-        with:
-          commit_message: 'chore: update package file'
-          work_dir: 'packages/my-package'
-````
-
-### With GPG Commit Signing
-
-```yaml
-name: 'signed-commit'
-on:
-  push:
-    branches: [main]
-
-jobs:
-  action:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create a file
-        run: echo "Signed content" >> signed.txt
-
-      - name: Commit and push with signature
-        uses: maxgfr/github-commit-push-file@main
-        with:
-          commit_message: 'chore: add signed file'
-          sign_commit: 'true'
-          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
-          gpg_passphrase: ${{ secrets.GPG_PASSPHRASE }}
+- name: Commit and push (if changes)
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'chore: update data'
+    files: 'data/output.json'
+    skip_if_no_changes: 'true'
 ```
 
-### With Custom Author
+### Template Variables
+
+Use template variables in commit messages, body, PR title, and PR body:
 
 ```yaml
-name: 'custom-author'
-on:
-  push:
-    branches: [main]
-
-jobs:
-  action:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create a file
-        run: echo "Bot content" >> bot.txt
-
-      - name: Commit and push with custom author
-        uses: maxgfr/github-commit-push-file@main
-        with:
-          commit_message: 'chore: automated update'
-          author_name: 'My Bot'
-          author_email: 'bot@example.com'
+- name: Commit with dynamic message
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'build: deploy {{sha:short}} to {{branch}} on {{date}}'
+    commit_body: 'Triggered by {{actor}} in run #{{run_number}}'
 ```
 
-### Pushing to a Different Branch
+Available variables:
+
+| Variable         | Description               | Example                    |
+| ---------------- | ------------------------- | -------------------------- |
+| `{{date}}`       | Current date (YYYY-MM-DD) | `2026-03-31`               |
+| `{{datetime}}`   | Current ISO datetime      | `2026-03-31T14:30:00.000Z` |
+| `{{sha}}`        | Current HEAD SHA          | `abc123def456...`          |
+| `{{sha:short}}`  | Short HEAD SHA (7 chars)  | `abc123d`                  |
+| `{{branch}}`     | Target branch name        | `main`                     |
+| `{{run_id}}`     | GitHub Actions run ID     | `12345678`                 |
+| `{{run_number}}` | GitHub Actions run number | `42`                       |
+| `{{actor}}`      | GitHub actor (user/bot)   | `octocat`                  |
+| `{{repository}}` | Repository (owner/name)   | `maxgfr/my-repo`           |
+
+### Working Directory (Monorepo)
 
 ```yaml
-name: 'push-to-branch'
-on:
-  push:
-    branches: [main]
+- name: Commit in subdirectory
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'chore: update package'
+    work_dir: 'packages/my-package'
+```
 
-jobs:
-  action:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+### Commit Body
 
-      - name: Create a file
-        run: echo "Feature content" >> feature.txt
+```yaml
+- name: Commit with body
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'feat: add new feature'
+    commit_body: |
+      This commit adds the new feature X.
 
-      - name: Commit and push to feature branch
-        uses: maxgfr/github-commit-push-file@main
-        with:
-          commit_message: 'feat: add feature file'
-          branch: 'feature-branch'
-          force_push: 'false'
+      Closes #123
+```
+
+### Exclude Files
+
+Stage all files but exclude sensitive ones:
+
+```yaml
+- name: Commit all except secrets
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'chore: update config'
+    exclude_files: '*.env .secrets credentials.json'
+```
+
+### File List From File
+
+Read the list of files to stage from a file generated by a previous step:
+
+```yaml
+- name: Generate file list
+  run: |
+    echo "src/generated.ts" > files-to-commit.txt
+    echo "src/types.ts" >> files-to-commit.txt
+
+- name: Commit listed files
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'chore: update generated files'
+    pathspec_from_file: 'files-to-commit.txt'
+```
+
+### Create a Branch
+
+Push to a new branch that doesn't exist yet:
+
+```yaml
+- name: Commit to new branch
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'feat: new feature'
+    branch: 'feature/my-feature'
+    create_branch: 'true'
+```
+
+### Amend Previous Commit
+
+```yaml
+- name: Amend last commit
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'chore: updated message'
+    amend: 'true'
+    force_push: 'true'
+```
+
+### Create Tags
+
+```yaml
+- name: Commit and tag
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'release: v1.0.0'
+    tag: 'v1.0.0'
+    tag_message: 'Release version 1.0.0'
+```
+
+### Custom Commit Timestamp
+
+```yaml
+- name: Commit with specific date
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'chore: backfill data'
+    commit_timestamp: '2024-01-01T00:00:00Z'
+```
+
+### Push Retry on Conflict
+
+When `force_push` is disabled and the remote has diverged, automatically pull with rebase and retry:
+
+```yaml
+- name: Commit with retry
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'chore: update shared file'
+    force_push: 'false'
+    retry_on_conflict: 'true'
+    max_retries: '5'
+```
+
+### Dry Run
+
+Preview what would be committed without actually committing:
+
+```yaml
+- name: Dry run
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'test: dry run'
+    dry_run: 'true'
+```
+
+### Multi-Commit (JSON)
+
+Create multiple commits in a single action run:
+
+```yaml
+- name: Multi-commit
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commits: |
+      [
+        {"message": "chore: update config", "files": "config.json"},
+        {"message": "feat: add feature", "files": "src/feature.ts src/types.ts"},
+        {"message": "docs: update readme", "files": "README.md"}
+      ]
+    force_push: 'true'
+    branch: 'automated-updates'
+```
+
+Each commit object supports `message` (required), `body` (optional), and `files` (optional, defaults to the top-level `files` input).
+
+### Create a Pull Request
+
+Push to a branch and automatically create a PR:
+
+```yaml
+- name: Commit and create PR
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'feat: automated update'
+    branch: 'auto-update'
+    create_branch: 'true'
+    create_pr: 'true'
+    pr_title: 'Automated update {{date}}'
+    pr_body: 'This PR was created automatically by {{actor}}.'
+    pr_base_branch: 'main'
+    pr_labels: 'automated, enhancement'
+    pr_draft: 'false'
+    token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### GPG Commit Signing
+
+```yaml
+- name: Signed commit
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'chore: signed update'
+    sign_commit: 'true'
+    gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+    gpg_passphrase: ${{ secrets.GPG_PASSPHRASE }}
+```
+
+### Custom Author
+
+```yaml
+- name: Commit with custom author
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'chore: automated update'
+    author_name: 'My Bot'
+    author_email: 'bot@example.com'
 ```
 
 ### Using Outputs
 
 ```yaml
-name: 'with-outputs'
-on:
-  push:
-    branches: [main]
+- name: Commit and push
+  id: commit
+  uses: maxgfr/github-commit-push-file@main
+  with:
+    commit_message: 'chore: update'
+    skip_if_no_changes: 'true'
 
-jobs:
-  action:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create a file
-        run: echo "Content" >> file.txt
-
-      - name: Commit and push
-        id: commit
-        uses: maxgfr/github-commit-push-file@main
-        with:
-          commit_message: 'chore: add file'
-          skip_if_no_changes: 'true'
-
-      - name: Check if committed
-        run: |
-          if [ "${{ steps.commit.outputs.committed }}" == "true" ]; then
-            echo "Commit was made with SHA: ${{ steps.commit.outputs.commit_sha }}"
-          else
-            echo "No changes were committed"
-          fi
+- name: Use outputs
+  if: steps.commit.outputs.committed == 'true'
+  run: |
+    echo "Commit SHA: ${{ steps.commit.outputs.commit_sha }}"
+    echo "Commit URL: ${{ steps.commit.outputs.commit_url }}"
+    echo "Changed files: ${{ steps.commit.outputs.changed_files }}"
 ```
 
 ## Inputs
 
-| Name                 | Type    | Required | Default                                 | Description                                                                               |
-| -------------------- | ------- | -------- | --------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `commit_message`     | string  | **yes**  | -                                       | The commit message                                                                        |
-| `files`              | string  | no       | `-A`                                    | Files to add (space-separated). Use `-A` for all files. Supports quoted paths with spaces |
-| `branch`             | string  | no       | current branch                          | Target branch to push to                                                                  |
-| `author_name`        | string  | no       | `GITHUB_ACTOR`                          | The name of the commit author                                                             |
-| `author_email`       | string  | no       | `GITHUB_ACTOR@users.noreply.github.com` | The email of the commit author                                                            |
-| `sign_commit`        | boolean | no       | `false`                                 | Whether to sign the commit with GPG                                                       |
-| `gpg_private_key`    | string  | no       | -                                       | GPG private key (base64 encoded) for signing commits                                      |
-| `gpg_passphrase`     | string  | no       | -                                       | Passphrase for the GPG private key                                                        |
-| `force_push`         | boolean | no       | `true`                                  | Whether to force push                                                                     |
-| `skip_if_no_changes` | boolean | no       | `true`                                  | Skip commit and push if there are no changes                                              |
-| `work_dir`           | string  | no       | repository root                         | Working directory to execute git commands in                                              |
+| Name                 | Type    | Required | Default                                 | Description                                                                                                      |
+| -------------------- | ------- | -------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `commit_message`     | string  | yes\*    | -                                       | The commit message. Supports [template variables](#template-variables). \*Not required if `commits` is provided. |
+| `commit_body`        | string  | no       | `''`                                    | Optional commit body (appended after a blank line). Supports template variables.                                 |
+| `files`              | string  | no       | `-A`                                    | Files to add (space-separated). Use `-A` for all files. Supports quoted paths and glob patterns.                 |
+| `branch`             | string  | no       | current branch                          | Target branch to push to.                                                                                        |
+| `author_name`        | string  | no       | `GITHUB_ACTOR`                          | The name of the commit author.                                                                                   |
+| `author_email`       | string  | no       | `GITHUB_ACTOR@users.noreply.github.com` | The email of the commit author.                                                                                  |
+| `sign_commit`        | boolean | no       | `false`                                 | Whether to sign the commit with GPG.                                                                             |
+| `gpg_private_key`    | string  | no       | -                                       | GPG private key (base64 encoded) for signing commits.                                                            |
+| `gpg_passphrase`     | string  | no       | -                                       | Passphrase for the GPG private key.                                                                              |
+| `force_push`         | boolean | no       | `true`                                  | Whether to force push.                                                                                           |
+| `skip_if_no_changes` | boolean | no       | `true`                                  | Skip commit and push if there are no changes.                                                                    |
+| `skip_hooks`         | boolean | no       | `true`                                  | Whether to skip git hooks (`--no-verify`) on commit.                                                             |
+| `work_dir`           | string  | no       | repository root                         | Working directory to execute git commands in.                                                                    |
+| `dry_run`            | boolean | no       | `false`                                 | Show what would be committed without actually committing or pushing.                                             |
+| `tag`                | string  | no       | -                                       | Optional tag to create on the commit.                                                                            |
+| `tag_message`        | string  | no       | -                                       | Message for annotated tag (if empty, creates a lightweight tag).                                                 |
+| `create_branch`      | boolean | no       | `false`                                 | Create the target branch if it does not exist on the remote.                                                     |
+| `amend`              | boolean | no       | `false`                                 | Amend the last commit instead of creating a new one. Cannot be used with `commits`.                              |
+| `commit_timestamp`   | string  | no       | -                                       | Override commit date. Accepts any git-compatible date format (e.g. `2024-01-01T00:00:00Z`).                      |
+| `exclude_files`      | string  | no       | -                                       | Files/patterns to exclude from staging (space-separated). Applied after `git add`.                               |
+| `pathspec_from_file` | string  | no       | -                                       | Path to a file containing the list of files to add (one per line). Takes precedence over `files`.                |
+| `commits`            | string  | no       | -                                       | JSON array of commits to make: `[{message, body?, files?}]`. Overrides `commit_message`/`files`.                 |
+| `retry_on_conflict`  | boolean | no       | `false`                                 | Retry push with `pull --rebase` if it fails (only when `force_push` is `false`).                                 |
+| `max_retries`        | number  | no       | `3`                                     | Maximum number of push retry attempts.                                                                           |
+| `create_pr`          | boolean | no       | `false`                                 | Create a pull request after pushing. Requires `token`.                                                           |
+| `pr_title`           | string  | no       | commit message                          | Title for the pull request. Supports template variables.                                                         |
+| `pr_base_branch`     | string  | no       | repo default branch                     | Base branch for the pull request.                                                                                |
+| `pr_body`            | string  | no       | -                                       | Body for the pull request. Supports template variables.                                                          |
+| `pr_labels`          | string  | no       | -                                       | Comma-separated list of labels to add to the pull request.                                                       |
+| `pr_draft`           | boolean | no       | `false`                                 | Create the pull request as a draft.                                                                              |
+| `token`              | string  | no       | -                                       | GitHub token for authentication (used for push auth and PR creation).                                            |
 
 ### Deprecated Inputs
 
-| Name          | Type   | Description                                  |
-| ------------- | ------ | -------------------------------------------- |
-| `commit_name` | string | **Deprecated**: Use `commit_message` instead |
+| Name          | Type   | Description                                   |
+| ------------- | ------ | --------------------------------------------- |
+| `commit_name` | string | **Deprecated**: Use `commit_message` instead. |
 
 ## Outputs
 
-| Name         | Type   | Description                                         |
-| ------------ | ------ | --------------------------------------------------- |
-| `committed`  | string | Whether a commit was made (`true` or `false`)       |
-| `commit_sha` | string | The SHA of the commit (empty if no commit was made) |
+| Name            | Type   | Description                                                       |
+| --------------- | ------ | ----------------------------------------------------------------- |
+| `committed`     | string | Whether a commit was made (`true` or `false`).                    |
+| `commit_sha`    | string | The SHA of the last commit (empty if no commit was made).         |
+| `commit_shas`   | string | JSON array of all commit SHAs (useful with multi-commit).         |
+| `commit_url`    | string | The GitHub URL of the last commit.                                |
+| `changed_files` | string | JSON array of files changed across all commits.                   |
+| `pr_url`        | string | The URL of the created pull request (if `create_pr` was used).    |
+| `pr_number`     | string | The number of the created pull request (if `create_pr` was used). |
 
 ## GPG Signing Setup
 
-To use GPG commit signing, you need to:
+To use GPG commit signing:
 
 1. **Generate a GPG key** (if you don't have one):
 
