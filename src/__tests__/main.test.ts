@@ -297,7 +297,7 @@ describe('getInputs', () => {
     mockInputs({
       commits: JSON.stringify([
         {message: 'commit 1', files: 'a.txt'},
-        {message: 'commit 2'}
+        {message: 'commit 2', files: 'b.txt'}
       ])
     })
     const inputs = getInputs()
@@ -320,20 +320,30 @@ describe('getInputs', () => {
     expect(() => getInputs()).toThrow('must have a "message" field')
   })
 
+  test('throws when commit in array has no files', () => {
+    mockInputs({
+      commits: JSON.stringify([
+        {message: 'commit 1', files: 'a.txt'},
+        {message: 'commit 2'}
+      ])
+    })
+    expect(() => getInputs()).toThrow('must have a "files" field')
+  })
+
   test('throws for empty commits array', () => {
     mockInputs({commits: '[]'})
     expect(() => getInputs()).toThrow('commits array must not be empty')
   })
 
   test('allows empty commit_message when commits array is provided', () => {
-    mockInputs({commits: JSON.stringify([{message: 'test'}])})
+    mockInputs({commits: JSON.stringify([{message: 'test', files: 'a.txt'}])})
     expect(() => getInputs()).not.toThrow()
   })
 
   test('throws when amend is used with commits array', () => {
     mockInputs({
       amend: 'true',
-      commits: JSON.stringify([{message: 'test'}])
+      commits: JSON.stringify([{message: 'test', files: 'a.txt'}])
     })
     expect(() => getInputs()).toThrow(
       'amend cannot be used with the commits array'
@@ -486,6 +496,46 @@ describe('run', () => {
 
       expect(mockSetOutput).toHaveBeenCalledWith('committed', 'true')
       expect(mockSetOutput).toHaveBeenCalledWith('commit_sha', 'abc123')
+    })
+
+    test('commits on a repository without any commit yet', async () => {
+      mockInputs({...defaultInputs, commit_message: 'init from={{sha}}'})
+
+      let committed = false
+      mockExecFn.mockImplementation(
+        async (cmd: string, args?: string[], opts?: any): Promise<number> => {
+          if (cmd === 'git' && args?.[0] === 'commit') {
+            committed = true
+            return 0
+          }
+          if (cmd === 'git' && args?.[0] === 'rev-parse') {
+            // No parent commit before the first commit is created
+            if (!committed) return 128
+            opts?.listeners?.stdout?.(Buffer.from('firstsha\n'))
+            return 0
+          }
+          if (
+            cmd === 'git' &&
+            args?.[0] === 'diff' &&
+            args?.[2] === '--quiet'
+          ) {
+            return 1
+          }
+          return 0
+        }
+      )
+
+      await run()
+
+      expect(mockSetFailed).not.toHaveBeenCalled()
+      expect(mockSetOutput).toHaveBeenCalledWith('committed', 'true')
+      expect(mockSetOutput).toHaveBeenCalledWith('commit_sha', 'firstsha')
+
+      const commitCall = mockExecFn.mock.calls.find(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'commit'
+      )
+      const msgIndex = (commitCall![1] as string[]).indexOf('-m') + 1
+      expect(commitCall![1][msgIndex]).toBe('init from=')
     })
 
     test('uses --local for git config (not --global)', async () => {
@@ -1091,6 +1141,99 @@ describe('run', () => {
       )
     })
 
+    test('fails before the API call when head equals base', async () => {
+      process.env.GITHUB_REPOSITORY = 'owner/repo'
+      process.env.GITHUB_API_URL = 'https://api.github.com'
+      mockInputs({
+        ...defaultInputs,
+        create_pr: 'true',
+        token: 'ghp_test',
+        pr_base_branch: 'main',
+        branch: 'main'
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      await run()
+
+      expect(mockSetFailed).toHaveBeenCalledWith(
+        expect.stringContaining('is the same as base branch')
+      )
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    test('fails when head equals the resolved default base branch', async () => {
+      process.env.GITHUB_REPOSITORY = 'owner/repo'
+      process.env.GITHUB_API_URL = 'https://api.github.com'
+      mockInputs({
+        ...defaultInputs,
+        create_pr: 'true',
+        token: 'ghp_test',
+        branch: 'main'
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      ;(global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({default_branch: 'main'})
+      })
+      await run()
+
+      expect(mockSetFailed).toHaveBeenCalledWith(
+        expect.stringContaining('is the same as base branch')
+      )
+      const pullsCall = (global.fetch as jest.Mock).mock.calls.find(
+        (c: any[]) => typeof c[0] === 'string' && c[0].includes('/pulls')
+      )
+      expect(pullsCall).toBeUndefined()
+    })
+
+    test('expands {{sha:short}} in PR title with the pushed commit SHA', async () => {
+      process.env.GITHUB_REPOSITORY = 'owner/repo'
+      process.env.GITHUB_API_URL = 'https://api.github.com'
+      mockInputs({
+        ...defaultInputs,
+        create_pr: 'true',
+        token: 'ghp_test',
+        pr_title: 'Update {{sha:short}}',
+        pr_base_branch: 'main',
+        branch: 'feature'
+      })
+
+      let head = 'aaaaaaaaaaaa'
+      mockExecFn.mockImplementation(
+        async (cmd: string, args?: string[], opts?: any): Promise<number> => {
+          if (cmd === 'git' && args?.[0] === 'commit') {
+            head = 'bbbbbbbbbbbb'
+            return 0
+          }
+          if (
+            cmd === 'git' &&
+            args?.[0] === 'diff' &&
+            args?.[2] === '--quiet'
+          ) {
+            return 1
+          }
+          if (cmd === 'git' && args?.[0] === 'rev-parse') {
+            opts?.listeners?.stdout?.(Buffer.from(head + '\n'))
+            return 0
+          }
+          return 0
+        }
+      )
+      ;(global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          html_url: 'https://github.com/owner/repo/pull/7',
+          number: 7
+        })
+      })
+      await run()
+
+      const fetchCall = (global.fetch as jest.Mock).mock.calls.find(
+        (c: any[]) => typeof c[0] === 'string' && c[0].includes('/pulls')
+      )
+      const body = JSON.parse(fetchCall[1].body as string)
+      expect(body.title).toBe('Update bbbbbbb')
+    })
+
     test('handles repo info fetch failure', async () => {
       process.env.GITHUB_REPOSITORY = 'owner/repo'
       process.env.GITHUB_API_URL = 'https://api.github.com'
@@ -1158,19 +1301,22 @@ describe('run', () => {
       )
       expect(commitCalls).toHaveLength(2)
 
-      // sha1 is consumed by the initial rev-parse for template vars
-      // so commit rev-parses get sha2 and sha3
+      // Each commit is preceded by a rev-parse for its template vars
+      // (sha1, sha3), so commit rev-parses get sha2 and sha4
       expect(mockSetOutput).toHaveBeenCalledWith(
         'commit_shas',
-        JSON.stringify(['sha2', 'sha3'])
+        JSON.stringify(['sha2', 'sha4'])
       )
-      expect(mockSetOutput).toHaveBeenCalledWith('commit_sha', 'sha3')
+      expect(mockSetOutput).toHaveBeenCalledWith('commit_sha', 'sha4')
     })
 
     test('only pushes once for multiple commits', async () => {
       mockInputs({
         ...defaultInputs,
-        commits: JSON.stringify([{message: 'commit 1'}, {message: 'commit 2'}])
+        commits: JSON.stringify([
+          {message: 'commit 1', files: 'a.txt'},
+          {message: 'commit 2', files: 'b.txt'}
+        ])
       })
       mockExecDefault({hasChanges: true, commitSha: 'sha1'})
       await run()
@@ -1180,6 +1326,88 @@ describe('run', () => {
           c[0] === 'git' && c[1]?.[0] === 'push' && !c[1]?.includes('v')
       )
       expect(pushCalls).toHaveLength(1)
+    })
+
+    test('stages only the declared files of each commit', async () => {
+      mockInputs({
+        ...defaultInputs,
+        commits: JSON.stringify([
+          {message: 'commit 1', files: 'a.txt'},
+          {message: 'commit 2', files: 'b.txt'}
+        ])
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      await run()
+
+      const addCalls = mockExecFn.mock.calls.filter(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'add'
+      )
+      expect(addCalls).toHaveLength(2)
+      expect(addCalls[0][1]).toEqual(['add', 'a.txt'])
+      expect(addCalls[1][1]).toEqual(['add', 'b.txt'])
+    })
+
+    test('fails when a commit in the array has no files', async () => {
+      mockInputs({
+        ...defaultInputs,
+        commits: JSON.stringify([
+          {message: 'commit 1', files: 'a.txt'},
+          {message: 'commit 2'}
+        ])
+      })
+      mockExecDefault({hasChanges: true, commitSha: 'sha1'})
+      await run()
+
+      expect(mockSetFailed).toHaveBeenCalledWith(
+        expect.stringContaining('must have a "files" field')
+      )
+      const commitCalls = mockExecFn.mock.calls.filter(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'commit'
+      )
+      expect(commitCalls).toHaveLength(0)
+    })
+
+    test('expands {{sha}} with the parent of each commit', async () => {
+      mockInputs({
+        ...defaultInputs,
+        commits: JSON.stringify([
+          {message: 'child of {{sha}}', files: 'a.txt'},
+          {message: 'child of {{sha}}', files: 'b.txt'}
+        ])
+      })
+
+      let head = 'parent0'
+      let commitCount = 0
+      mockExecFn.mockImplementation(
+        async (cmd: string, args?: string[], opts?: any): Promise<number> => {
+          if (cmd === 'git' && args?.[0] === 'commit') {
+            commitCount++
+            head = `commitsha${commitCount}`
+            return 0
+          }
+          if (
+            cmd === 'git' &&
+            args?.[0] === 'diff' &&
+            args?.[2] === '--quiet'
+          ) {
+            return 1
+          }
+          if (cmd === 'git' && args?.[0] === 'rev-parse') {
+            opts?.listeners?.stdout?.(Buffer.from(head + '\n'))
+            return 0
+          }
+          return 0
+        }
+      )
+      await run()
+
+      const commitCalls = mockExecFn.mock.calls.filter(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'commit'
+      )
+      const msg1Idx = (commitCalls[0][1] as string[]).indexOf('-m') + 1
+      const msg2Idx = (commitCalls[1][1] as string[]).indexOf('-m') + 1
+      expect(commitCalls[0][1][msg1Idx]).toBe('child of parent0')
+      expect(commitCalls[1][1][msg2Idx]).toBe('child of commitsha1')
     })
   })
 
@@ -1224,6 +1452,57 @@ describe('run', () => {
         (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'commit'
       )
       expect(commitCall![1]).not.toContain('--amend')
+    })
+
+    test('populates changed_files from HEAD when amending without new changes', async () => {
+      mockInputs({...defaultInputs, amend: 'true'})
+      mockExecFn.mockImplementation(
+        async (cmd: string, args?: string[], opts?: any): Promise<number> => {
+          if (cmd === 'git' && args?.[0] === 'diff') {
+            // Nothing staged
+            return 0
+          }
+          if (cmd === 'git' && args?.[0] === 'rev-parse') {
+            opts?.listeners?.stdout?.(Buffer.from('sha1\n'))
+            return 0
+          }
+          if (cmd === 'git' && args?.[0] === 'show') {
+            opts?.listeners?.stdout?.(Buffer.from('a.txt\nb.txt\n'))
+            return 0
+          }
+          return 0
+        }
+      )
+      await run()
+
+      const showCall = mockExecFn.mock.calls.find(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'show'
+      )
+      expect(showCall![1]).toEqual(['show', '--name-only', '--format=', 'HEAD'])
+      expect(mockSetOutput).toHaveBeenCalledWith('committed', 'true')
+      expect(mockSetOutput).toHaveBeenCalledWith(
+        'changed_files',
+        JSON.stringify(['a.txt', 'b.txt'])
+      )
+    })
+
+    test('does not read HEAD files when amend has staged changes', async () => {
+      mockInputs({...defaultInputs, amend: 'true'})
+      mockExecDefault({
+        hasChanges: true,
+        commitSha: 'sha1',
+        changedFiles: 'staged.txt\n'
+      })
+      await run()
+
+      const showCall = mockExecFn.mock.calls.find(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'show'
+      )
+      expect(showCall).toBeUndefined()
+      expect(mockSetOutput).toHaveBeenCalledWith(
+        'changed_files',
+        JSON.stringify(['staged.txt'])
+      )
     })
   })
 
@@ -1461,6 +1740,50 @@ describe('run', () => {
 
       await run()
 
+      // max_retries=2 means 2 retries after the initial attempt
+      const pushCalls = mockExecFn.mock.calls.filter(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'push'
+      )
+      expect(pushCalls).toHaveLength(3)
+      expect(mockSetFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Push failed after 3 attempts')
+      )
+    })
+
+    test('attempts once more than max_retries', async () => {
+      mockInputs({
+        ...defaultInputs,
+        force_push: 'false',
+        retry_on_conflict: 'true',
+        max_retries: '1'
+      })
+
+      mockExecFn.mockImplementation(
+        async (cmd: string, args?: string[], opts?: any): Promise<number> => {
+          if (
+            cmd === 'git' &&
+            args?.[0] === 'diff' &&
+            args?.[2] === '--quiet'
+          ) {
+            return 1
+          }
+          if (cmd === 'git' && args?.[0] === 'rev-parse') {
+            opts?.listeners?.stdout?.(Buffer.from('sha1\n'))
+            return 0
+          }
+          if (cmd === 'git' && args?.[0] === 'push') {
+            return 1 // Always fail
+          }
+          return 0
+        }
+      )
+
+      await run()
+
+      const pushCalls = mockExecFn.mock.calls.filter(
+        (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'push'
+      )
+      expect(pushCalls).toHaveLength(2)
       expect(mockSetFailed).toHaveBeenCalledWith(
         expect.stringContaining('Push failed after 2 attempts')
       )
@@ -1802,8 +2125,8 @@ describe('run', () => {
       mockInputs({
         ...defaultInputs,
         commits: JSON.stringify([
-          {message: 'deploy {{branch}} part 1'},
-          {message: 'deploy {{branch}} part 2'}
+          {message: 'deploy {{branch}} part 1', files: 'a.txt'},
+          {message: 'deploy {{branch}} part 2', files: 'b.txt'}
         ])
       })
       mockExecDefault({hasChanges: true, commitSha: 'sha1'})

@@ -132,7 +132,7 @@ inputs:
 
   commits:
     required: false
-    description: 'JSON array of commits to make [{message, body?, files?}]. Overrides commit_message/files if provided. Supports template variables.'
+    description: 'JSON array of commits to make [{message, files, body?}]. Each commit must declare its own files. Overrides commit_message/files if provided. Supports template variables.'
     default: ''
 
   amend:
@@ -147,7 +147,7 @@ inputs:
 
   max_retries:
     required: false
-    description: Maximum number of push retry attempts when retry_on_conflict is enabled
+    description: Number of push retries after the initial attempt fails, when retry_on_conflict is enabled (total attempts = max_retries + 1)
     default: '3'
 
   exclude_files:

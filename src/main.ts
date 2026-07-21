@@ -7,7 +7,7 @@ import * as path from 'path'
 interface CommitConfig {
   message: string
   body?: string
-  files?: string
+  files: string
 }
 
 interface ActionInputs {
@@ -173,6 +173,24 @@ const buildTemplateVars = (
   }
 }
 
+/**
+ * Reads the current HEAD SHA. Returns an empty string when the repository
+ * has no commits yet (e.g. a freshly initialized repo or an orphan branch).
+ */
+const getHeadSha = async (): Promise<string> => {
+  let output = ''
+  const exitCode = await exec.exec('git', ['rev-parse', 'HEAD'], {
+    ignoreReturnCode: true,
+    silent: true,
+    listeners: {
+      stdout: (data: Buffer) => {
+        output += data.toString()
+      }
+    }
+  })
+  return exitCode === 0 ? output.trim() : ''
+}
+
 const getInputs = (): ActionInputs => {
   let commitMessage = core.getInput('commit_message')
   if (!commitMessage) {
@@ -200,6 +218,12 @@ const getInputs = (): ActionInputs => {
         if (!c.message) {
           throw new Error(
             'Each commit in the commits array must have a "message" field'
+          )
+        }
+        if (!c.files) {
+          throw new Error(
+            'Each commit in the commits array must have a "files" field. ' +
+              'Without it, staging would pick up files intended for other commits in the array.'
           )
         }
       }
@@ -534,18 +558,27 @@ const performCommit = async (
     }
   }
 
-  let commitSha = ''
-  await exec.exec('git', ['rev-parse', 'HEAD'], {
-    listeners: {
-      stdout: (data: Buffer) => {
-        commitSha += data.toString()
-      }
-    }
-  })
-  commitSha = commitSha.trim()
+  const commitSha = await getHeadSha()
 
   if (!commitSha) {
     throw new Error('Failed to get commit SHA after commit')
+  }
+
+  if (amend && changedFiles.length === 0) {
+    let amendedFilesOutput = ''
+    await exec.exec('git', ['show', '--name-only', '--format=', 'HEAD'], {
+      listeners: {
+        stdout: (data: Buffer) => {
+          amendedFilesOutput += data.toString()
+        }
+      }
+    })
+    changedFiles.push(
+      ...amendedFilesOutput
+        .trim()
+        .split('\n')
+        .filter(f => f.length > 0)
+    )
   }
 
   return {committed: true, sha: commitSha, changedFiles}
@@ -581,6 +614,13 @@ const createPullRequest = async (
       default_branch: string
     }
     prBase = repoData.default_branch
+  }
+
+  if (head === prBase) {
+    throw new Error(
+      `Cannot create a pull request: head branch "${head}" is the same as base branch "${prBase}". ` +
+        'Use the "branch" input to push to a different branch than the base.'
+    )
   }
 
   const prPayload: Record<string, unknown> = {
@@ -698,19 +738,6 @@ const run = async (): Promise<void> => {
 
     const targetBranch = resolveBranch(inputs.branch)
 
-    // Get current HEAD SHA for template variables
-    let currentHeadSha = ''
-    await exec.exec('git', ['rev-parse', 'HEAD'], {
-      listeners: {
-        stdout: (data: Buffer) => {
-          currentHeadSha += data.toString()
-        }
-      }
-    })
-    currentHeadSha = currentHeadSha.trim()
-
-    const templateVars = buildTemplateVars(targetBranch, currentHeadSha)
-
     // Build commit options shared across single/multi mode
     const baseCommitOpts = {
       signCommit: inputs.signCommit,
@@ -733,11 +760,13 @@ const run = async (): Promise<void> => {
       for (let i = 0; i < inputs.commits.length; i++) {
         const commit = inputs.commits[i]
         core.info(`Commit ${i + 1}/${inputs.commits.length}: ${commit.message}`)
+        // HEAD at this point is the parent of the commit being created
+        const templateVars = buildTemplateVars(targetBranch, await getHeadSha())
         const result = await performCommit({
           ...baseCommitOpts,
           message: expandTemplateVars(commit.message, templateVars),
           body: expandTemplateVars(commit.body || '', templateVars),
-          files: commit.files || inputs.files
+          files: commit.files
         })
         if (result.committed) {
           allShas.push(result.sha)
@@ -748,6 +777,7 @@ const run = async (): Promise<void> => {
     } else {
       core.info(`Commit message: ${inputs.commitMessage}`)
       core.info(`Files to add: ${inputs.files}`)
+      const templateVars = buildTemplateVars(targetBranch, await getHeadSha())
       lastResult = await performCommit({
         ...baseCommitOpts,
         message: expandTemplateVars(inputs.commitMessage, templateVars),
@@ -801,7 +831,8 @@ const run = async (): Promise<void> => {
     }
 
     if (inputs.retryOnConflict && !inputs.forcePush) {
-      const maxAttempts = inputs.maxRetries
+      // max_retries counts retries after the initial attempt
+      const maxAttempts = inputs.maxRetries + 1
       let pushSuccess = false
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         const exitCode = await exec.exec('git', pushArgs, {
@@ -871,16 +902,18 @@ const run = async (): Promise<void> => {
       if (!inputs.token) {
         throw new Error('token is required when create_pr is enabled')
       }
+      // HEAD now points to the pushed commit
+      const prTemplateVars = buildTemplateVars(targetBranch, await getHeadSha())
       const prTitle = expandTemplateVars(
         inputs.prTitle ||
           inputs.commitMessage ||
           inputs.commits[0]?.message ||
           'Automated changes',
-        templateVars
+        prTemplateVars
       )
       const prBody = expandTemplateVars(
         inputs.prBody || inputs.commitBody || '',
-        templateVars
+        prTemplateVars
       )
       core.info('Creating pull request...')
       const pr = await createPullRequest(
@@ -942,6 +975,7 @@ export {
   parseFileList,
   isValidBase64,
   resolveBranch,
+  getHeadSha,
   performCommit,
   createPullRequest,
   expandTemplateVars,

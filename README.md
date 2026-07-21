@@ -199,6 +199,8 @@ When `force_push` is disabled and the remote has diverged, automatically pull wi
     max_retries: '5'
 ```
 
+`max_retries` counts the retries after the first push attempt, so `max_retries: '5'` allows up to 6 push attempts in total.
+
 ### Dry Run
 
 Preview what would be committed without actually committing:
@@ -229,7 +231,9 @@ Create multiple commits in a single action run:
     branch: 'automated-updates'
 ```
 
-Each commit object supports `message` (required), `body` (optional), and `files` (optional, defaults to the top-level `files` input).
+Each commit object supports `message` (required), `files` (required), and `body` (optional).
+
+> **Note:** in multi-commit mode, every commit must declare its own `files`. There is no fallback to the top-level `files` input: with the `-A` default, `git add -A` would stage the whole worktree and swallow files intended for the following commits. The action fails with an explicit error if a commit omits `files`.
 
 ### Create a Pull Request
 
@@ -250,6 +254,10 @@ Push to a branch and automatically create a PR:
     pr_draft: 'false'
     token: ${{ secrets.GITHUB_TOKEN }}
 ```
+
+The head branch must be different from the base branch: the action fails before calling the GitHub API if they resolve to the same branch.
+
+> **Limitation:** cross-fork pull requests are not supported. The action always pushes to the repository it runs in (`GITHUB_REPOSITORY`) and passes the head as a bare branch name (no `owner:branch` prefix), so the head branch must live in the same repository as the base branch.
 
 ### GPG Commit Signing
 
@@ -317,9 +325,9 @@ Push to a branch and automatically create a PR:
 | `commit_timestamp`   | string  | no       | -                                       | Override commit date. Accepts any git-compatible date format (e.g. `2024-01-01T00:00:00Z`).                      |
 | `exclude_files`      | string  | no       | -                                       | Files/patterns to exclude from staging (space-separated). Applied after `git add`.                               |
 | `pathspec_from_file` | string  | no       | -                                       | Path to a file containing the list of files to add (one per line). Takes precedence over `files`.                |
-| `commits`            | string  | no       | -                                       | JSON array of commits to make: `[{message, body?, files?}]`. Overrides `commit_message`/`files`.                 |
+| `commits`            | string  | no       | -                                       | JSON array of commits to make: `[{message, files, body?}]`. Each commit must declare its own `files`.            |
 | `retry_on_conflict`  | boolean | no       | `false`                                 | Retry push with `pull --rebase` if it fails (only when `force_push` is `false`).                                 |
-| `max_retries`        | number  | no       | `3`                                     | Maximum number of push retry attempts.                                                                           |
+| `max_retries`        | number  | no       | `3`                                     | Number of push retries after the initial attempt fails (total attempts = `max_retries` + 1).                     |
 | `create_pr`          | boolean | no       | `false`                                 | Create a pull request after pushing. Requires `token`.                                                           |
 | `pr_title`           | string  | no       | commit message                          | Title for the pull request. Supports template variables.                                                         |
 | `pr_base_branch`     | string  | no       | repo default branch                     | Base branch for the pull request.                                                                                |
