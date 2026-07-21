@@ -34,12 +34,12 @@
   "author": "maxgfr",
   "license": "MIT",
   "dependencies": {
-    "@actions/core": "^1.11.1",
-    "@actions/exec": "^1.1.1"
+    "@actions/core": "^2.0.3",
+    "@actions/exec": "^2.0.0"
   },
   "devDependencies": {
-    "@actions/core": "^1.11.1",
-    "@actions/exec": "^1.1.1",
+    "@actions/core": "^2.0.3",
+    "@actions/exec": "^2.0.0",
     "@types/jest": "^29.5.12",
     "@types/node": "^22.10.2",
     "@eslint/js": "^9.17.0",
@@ -68,11 +68,6 @@
     "*.{json,md,yml,yaml}": [
       "prettier --write"
     ]
-  },
-  "pnpm": {
-    "overrides": {
-      "undici": "^6.23.0"
-    }
   },
   "engines": {
     "node": ">=24.0.0",
