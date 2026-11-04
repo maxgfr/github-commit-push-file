@@ -38,7 +38,7 @@ jobs:
   action:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Create a file
         run: echo "Hello World" >> hello.txt
